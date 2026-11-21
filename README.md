@@ -60,6 +60,28 @@ The two hard parts:
 
 Site isolation defeats in-process attacks like Spectre, but contention channels work through physically shared caches and memory, and published research has demonstrated them across processes and VMs. **This demo does not test that** — both its threads are in one process. Real mitigations (coarser timers, gated `SharedArrayBuffer`, throttling) mostly make such channels slower and noisier; removing the sharing takes hardware partitioning or separate machines. The demo's defence dial is an explicitly labelled **simulation** of how noise raises the error rate and lowers Shannon capacity, not a measurement of any real defence.
 
+## Native (C) version
+
+`native/` holds C versions of both halves. It doesn't replace the browser demo. It tests what the browser can't: a nanosecond clock, finer window sizes, a choice of core cluster, extra access patterns that separate prefetching from overlapping misses, and a channel between two **separate processes** with no shared start time.
+
+```bash
+make -C native            # builds native/chase and native/channel (any C11 compiler)
+make -C native test       # decoder self-test on synthetic traces + a smoke sweep
+
+./native/chase --modes chase,chain,stream,scatter --per-octave 4 > sweep.csv
+./native/chase --modes chase,pagechase --min 1M --max 64M     # TLB control
+./native/chase --qos e    # macOS: steer to the efficiency cores (Linux: --cpu N)
+
+./native/channel run "hello" --trace out.json   # receiver + sender as two processes
+./native/channel run cache --send-qos e --recv-qos p           # across core clusters
+./native/batch.sh 20 > results.csv              # reliability over many runs
+```
+
+- **`chase`** offers four access patterns: shuffled or sequential, crossed with dependent or independent loads. It also has a `pagechase` mode, which takes about one translation (TLB) miss per page instead of one per access, so translation cost can be told apart from a cache boundary.
+- **`channel`** runs the sender and receiver as independent processes. The sender waits a random delay that only it knows; the receiver finds the frame **in-band**, by matching the preamble and checking the start byte. `--trace` writes every sample, the threshold, the decoded text and the settings as JSON. The browser's **Save trace** button writes the same format.
+
+Captured results (sweeps, the reliability batch and example traces) are in `data/native/`, and the article's Part 8 discusses them.
+
 ## Layout
 
 ```
@@ -70,6 +92,7 @@ src/
 web/       index.html  cache.html  article.html          (page templates)
 data/      cache fixtures — inlined at build
 test/      pure codec + model tests, run under node --test
+native/    C measurement + cross-process channel (make -C native)
 scripts/   build.mjs
 dist/      the built, self-contained pages
 ```

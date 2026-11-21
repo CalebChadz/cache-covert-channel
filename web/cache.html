@@ -236,7 +236,10 @@
       </p>
     </fieldset>
 
-    <button id="chRun" class="primary">Transmit</button>
+    <div class="row">
+      <button id="chRun" class="primary">Transmit</button>
+      <button id="chSave" disabled title="Download this run's samples, decode and settings as JSON">Save trace</button>
+    </div>
 
     <div id="chLiveNote" style="display:none">
       Live mode is <strong>best-effort</strong>. Whether real bits decode depends
@@ -329,6 +332,7 @@
     <li><strong>Raw bitrate</strong> — 40 ms per chip, two chips per bit. Useful throughput is lower once the preamble, framing and (optional) error correction are counted.</li>
     <li><strong>Bit error rate</strong> — of the decoded message against what was sent. Short messages make this a coarse estimate.</li>
     <li><strong>Capacity</strong> — the Shannon limit, rate × (1 − H(p)), using the raw bit error rate across the whole frame. An upper bound, not something this codec achieves.</li>
+    <li><strong>Save trace</strong> — downloads the run as JSON: every latency sample, the threshold, the decoded and sent text, and the settings. It's the same format the native C version writes, so a live result can be kept and checked rather than just reported.</li>
     <li><strong>Checksum</strong> — one byte, sum mod 256. It catches any single flipped message bit, but it's weak against multiple errors.</li>
   </ul>
 </div>

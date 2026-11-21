@@ -1,0 +1,101 @@
+config,trial,send_qos,recv_qos,probe_mb,chip_ms,sent,received,checksum_ok,bit_errors,bits
+same-cluster-p,1,p,p,8,20,cache,,0,40,40
+same-cluster-p,2,p,p,8,20,cache,cache,1,0,40
+same-cluster-p,3,p,p,8,20,cache,cache,1,0,40
+same-cluster-p,4,p,p,8,20,cache,cachd,0,1,40
+same-cluster-p,5,p,p,8,20,cache,cache,0,0,40
+same-cluster-p,6,p,p,8,20,cache,kache,0,1,40
+same-cluster-p,7,p,p,8,20,cache,caChe,0,1,40
+same-cluster-p,8,p,p,8,20,cache,cache,1,0,40
+same-cluster-p,9,p,p,8,20,cache,cac(e,0,1,40
+same-cluster-p,10,p,p,8,20,cache,,0,40,40
+same-cluster-p,11,p,p,8,20,cache,ca#he,0,1,40
+same-cluster-p,12,p,p,8,20,cache,cache,1,0,40
+same-cluster-p,13,p,p,8,20,cache,cAahe,0,2,40
+same-cluster-p,14,p,p,8,20,cache,c!che,0,1,40
+same-cluster-p,15,p,p,8,20,cache,cache,1,0,40
+same-cluster-p,16,p,p,8,20,cache,cache,0,0,40
+same-cluster-p,17,p,p,8,20,cache,cache,1,0,40
+same-cluster-p,18,p,p,8,20,cache,cacHe,0,1,40
+same-cluster-p,19,p,p,8,20,cache,,0,40,40
+same-cluster-p,20,p,p,8,20,cache,cache,1,0,40
+default-sched,1,-,-,8,20,cache,cache,1,0,40
+default-sched,2,-,-,8,20,cache,cache,1,0,40
+default-sched,3,-,-,8,20,cache,cache,1,0,40
+default-sched,4,-,-,8,20,cache,cache,1,0,40
+default-sched,5,-,-,8,20,cache,cache,1,0,40
+default-sched,6,-,-,8,20,cache,cache,1,0,40
+default-sched,7,-,-,8,20,cache,cache,1,0,40
+default-sched,8,-,-,8,20,cache,cache,1,0,40
+default-sched,9,-,-,8,20,cache,cache,1,0,40
+default-sched,10,-,-,8,20,cache,cache,1,0,40
+default-sched,11,-,-,8,20,cache,cache,1,0,40
+default-sched,12,-,-,8,20,cache,cache,1,0,40
+default-sched,13,-,-,8,20,cache,cache,1,0,40
+default-sched,14,-,-,8,20,cache,cache,1,0,40
+default-sched,15,-,-,8,20,cache,cache,1,0,40
+default-sched,16,-,-,8,20,cache,cache,1,0,40
+default-sched,17,-,-,8,20,cache,cache,1,0,40
+default-sched,18,-,-,8,20,cache,cache,1,0,40
+default-sched,19,-,-,8,20,cache,cache,1,0,40
+default-sched,20,-,-,8,20,cache,cache,1,0,40
+default-long,1,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,2,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,3,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,4,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,5,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,6,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,7,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,8,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,9,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,10,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,11,-,-,8,20,through the cache,throug`_the cache,0,2,136
+default-long,12,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,13,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,14,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,15,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,16,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,17,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,18,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,19,-,-,8,20,through the cache,through the cache,1,0,136
+default-long,20,-,-,8,20,through the cache,through the cache,1,0,136
+cross-cluster-l2,1,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,2,e,p,8,20,cache,,0,
+cross-cluster-l2,3,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,4,e,p,8,20,cache,y=x,0,27,40
+cross-cluster-l2,5,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,6,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,7,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,8,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,9,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,10,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,11,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,12,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,13,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,14,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,15,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,16,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,17,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,18,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,19,e,p,8,20,cache,,0,40,40
+cross-cluster-l2,20,e,p,8,20,cache,,0,40,40
+cross-cluster-bw,1,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,2,e,p,64,20,cache,#achE,0,2,40
+cross-cluster-bw,3,e,p,64,20,cache,cac(e,0,1,40
+cross-cluster-bw,4,e,p,64,20,cache,cache,1,0,40
+cross-cluster-bw,5,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,6,e,p,64,20,cache,cache,1,0,40
+cross-cluster-bw,7,e,p,64,20,cache,c,0,32,40
+cross-cluster-bw,8,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,9,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,10,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,11,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,12,e,p,64,20,cache,cabhe,0,1,40
+cross-cluster-bw,13,e,p,64,20,cache,cachd,0,1,40
+cross-cluster-bw,14,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,15,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,16,e,p,64,20,cache,cache,1,0,40
+cross-cluster-bw,17,e,p,64,20,cache,cache,1,0,40
+cross-cluster-bw,18,e,p,64,20,cache,,0,40,40
+cross-cluster-bw,19,e,p,64,20,cache,cacje,0,1,40
+cross-cluster-bw,20,e,p,64,20,cache,#acHe,0,2,40

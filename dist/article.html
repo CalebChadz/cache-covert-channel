@@ -428,11 +428,12 @@ pre.code b { color: var(--accent); font-weight: 600; }
   <div class="tablewrap"><table style="min-width:600px">
     <tr><th>Claim</th><th>Evidence</th><th>Strength</th></tr>
     <tr><td>Timing a dependent-load chain with a coarse browser clock reveals the cache hierarchy</td><td>Captured sweep in <code>data/cache/fixtures.json</code> (79× range); live mode on your machine</td><td>Shipped · one machine</td></tr>
-    <tr><td>A linear-stride walk shows a flat line instead</td><td>Captured sweep, same machine and date (0.55–0.88 ns)</td><td>Shipped · cause not isolated (Part 4)</td></tr>
-    <tr><td>Boundaries match the published cache sizes</td><td>Power-of-two sweep, compared with published specs</td><td>Consistent, but each edge is only bracketed to within 2×</td></tr>
-    <tr><td>Two threads can pass a message through cache/memory contention</td><td>Live mode; author's run decoded <code>cache</code> intact</td><td>Reported · trace not published</td></tr>
+    <tr><td>A linear-stride walk shows a flat line instead</td><td>Captured sweep, same machine and date (0.55–0.88 ns); native four-way test separates the causes</td><td>Shipped · causes measured natively (Part 8)</td></tr>
+    <tr><td>Boundaries match the published cache sizes</td><td>Browser power-of-two sweep; native sweep at 4 points per octave on both core clusters</td><td>Shipped · L1 and L2 edges match on both clusters (Part 8)</td></tr>
+    <tr><td>Two threads can pass a message through cache/memory contention</td><td>Browser live mode (author's run decoded <code>cache</code> intact); <strong>Save trace</strong> now exports any run</td><td>Reported for the browser · see the native row below</td></tr>
+    <tr><td>Two <em>separate processes</em> can, with no shared start time</td><td>Native <code>channel</code>: 100-run batch and example traces in <code>data/native/</code></td><td>Shipped · 39/40 clean runs on default scheduling (Part 8)</td></tr>
     <tr><td>The replay and the "defence dial" show how noise affects the channel</td><td>Seeded simulation in <code>channel-sim.js</code></td><td>Illustration, not measurement</td></tr>
-    <tr><td>This kind of channel survives process and VM isolation</td><td>Published cross-VM research; not tested here (both threads share one process)</td><td>Argued · not demonstrated</td></tr>
+    <tr><td>This kind of channel survives VM isolation</td><td>Published cross-VM research; native test covers separate processes, not VMs</td><td>Processes: shipped · VMs: argued</td></tr>
   </table></div>
 
   <nav class="tocbar" aria-label="Contents">
@@ -445,7 +446,8 @@ pre.code b { color: var(--accent); font-weight: 600; }
     <a href="#part5">the fix</a>
     <a href="#part6">reality check</a>
     <a href="#part7">the covert channel</a>
-    <a href="#part8">replicate it</a>
+    <a href="#part8">native results</a>
+    <a href="#part9">replicate it</a>
     <a href="#refs">further reading</a>
   </nav>
 
@@ -779,8 +781,9 @@ for (let i = 0; i &lt; steps; i++) {
     A cleaner experiment would add the two missing combinations: a dependent
     chain laid out in linear order (prefetchable, but serialised), and
     independent loads in random order (unprefetchable, but overlappable). Those
-    aren't in the demo yet, so the fair statement is "prefetching and/or
-    overlapping hide the latency", not "the prefetcher alone". Note too that the
+    aren't in the browser demo, so on its evidence alone the fair statement is
+    "prefetching and/or overlapping hide the latency". The native version runs
+    all four combinations; the answer is in Part 8 (short version: both do). Note too that the
     two loops differ in more than access order: one does read-modify-write on
     bytes, the other plain loads on 32-bit integers.
   </p>
@@ -879,11 +882,14 @@ for (let i = 0; i &lt; steps; i++) {
     separately.
   </p>
   <p>
-    The gentle rise from 4 MB to 16 MB is the part I can't fully explain. Two
-    plausible causes are running out of TLB reach (the address-translation cache
-    covers only a limited span of memory, and a random walk over a large window
-    misses in it), or the thread running on an efficiency core, whose L2 is
-    smaller. I haven't tested either, so treat both as hypotheses.
+    The gentle rise from 4 MB to 16 MB had two candidate explanations: running
+    out of TLB reach (the address-translation cache covers only a limited span of
+    memory, and a random walk over a large window misses in it), or the thread
+    running on an efficiency core, whose L2 is only 4 MB. The native version
+    tested both (Part 8). The performance-core run shows the same rise, which
+    rules out the efficiency core. A walk that takes one TLB miss per page
+    instead of one per access stays flat right up to 16 MB, which points to
+    translation cost.
   </p>
   <p>
     I also ran a finer sweep with windows between the powers of two, which
@@ -978,8 +984,9 @@ function thrash(ms){
     8.7 ns is close to the captured sweep's 7.8 ns at 8 MB (the region sitting in
     cache), and 90 ns is close to its 83 ns DRAM figure (the region pushed out to
     main memory). So the likeliest mechanism is eviction: the sender's 24 MB
-    stream pushes the receiver's 8 MB out of the shared cache. Memory-bandwidth
-    contention could contribute too, and this design can't tell the two apart.
+    stream pushes the receiver's 8 MB out of the shared cache. The browser can't
+    separate that from memory-bandwidth contention; the native cross-cluster
+    test in Part 8 can, and it supports eviction.
   </p>
 
   <p class="filetag">src/cache/channel-sim.js — the model, straight from the measured hardware</p>
@@ -1189,7 +1196,126 @@ export function manchesterEncode(bits) {
   </p>
 
   <!-- ============================================================ -->
-  <h2 id="part8">Part 8 — Replicate it yourself</h2>
+  <h2 id="part8">Part 8 — The native version: testing what the browser couldn't</h2>
+
+  <p>
+    Several questions above ended in "this demo can't tell". The C programs in
+    <code>native/</code> exist to answer them. They have a nanosecond clock,
+    windows at four sizes per doubling, and a scheduler hint that steers a thread
+    to the performance cores (P) or the efficiency cores (E). All results below
+    are from the same A18 Pro machine, and the raw CSV and JSON files are in
+    <code>data/native/</code>.
+  </p>
+
+  <h3>The edges, at finer resolution and on both core types</h3>
+  <div class="tablewrap"><table style="min-width:560px">
+    <tr><th>Core type</th><th>L1 edge</th><th>L2 edge</th><th>Expected</th></tr>
+    <tr><td>Performance (P)</td><td>between 128 and 152 KB (0.78 → 3.4 ns)</td><td>rises past 16 MB (12.7 → 36 ns by 32 MB)</td><td>128 KB L1d · 16 MB L2</td></tr>
+    <tr><td>Efficiency (E)</td><td>between 64 and 76 KB</td><td>between 3.4 and 4 MB (21 → 43 ns)</td><td>64 KB L1d · 4 MB L2</td></tr>
+  </table></div>
+  <p>
+    The P-core L1 latency, 0.78 ns, is about 3 cycles at 4.04 GHz, which matches
+    the ~3-cycle load-to-use latency measured for Apple's performance cores
+    (7-CPU, cited below). The browser's 1.05 ns is about one cycle of
+    JavaScript overhead on top. The E-core run is noisy (background priority gets
+    interrupted a lot), but both of its edges land on the sizes macOS itself
+    reports for this chip (<code>sysctl hw.perflevel1</code>: 64 KB L1d, 4 MB L2).
+    One discrepancy I haven't explained: past 32 MB the native chase reads
+    35–50 ns, against the browser capture's 83 ns at 64 MB.
+  </p>
+
+  <h3>What hides the latency: all four patterns</h3>
+  <div class="tablewrap"><table style="min-width:560px">
+    <tr><th>Pattern</th><th>Loads are…</th><th>1 MB (in L2)</th><th>128 MB (DRAM)</th></tr>
+    <tr><td><code>chase</code></td><td>shuffled, dependent</td><td class="num">5.5 ns</td><td class="num">~35–50 ns</td></tr>
+    <tr><td><code>chain</code></td><td>sequential, dependent</td><td class="num">1.8 ns</td><td class="num">1.0 ns</td></tr>
+    <tr><td><code>scatter</code></td><td>shuffled, independent</td><td class="num">0.75 ns</td><td class="num">5.2 ns</td></tr>
+    <tr><td><code>stream</code></td><td>sequential, independent</td><td class="num">0.77 ns</td><td class="num">1.0 ns</td></tr>
+  </table></div>
+  <p>
+    Both effects are real, and each one alone is enough to hide most of the
+    latency. Overlapping independent loads (<code>scatter</code>) hides about
+    90% of it even with no pattern to predict. More surprising, a
+    <em>dependent</em> chain in sequential order (<code>chain</code>) costs about
+    1 ns per access even out to 128 MB. Each load waits for the previous one, and
+    yet the latency still disappears. That fits Apple's load address predictor,
+    which guesses where a load will go before its address is known (Kim et al.,
+    <em>SLAP</em>, 2025), though an aggressive prefetcher would look the same
+    from here. The practical upshot for Part 4: on this chip, "make the loads
+    dependent" is not enough. The addresses must be unpredictable as well.
+  </p>
+
+  <h3>The 4–16 MB rise is address translation</h3>
+  <p>
+    A <code>pagechase</code> mode visits pages in random order but finishes every
+    line in a page (also in random order) before moving on. That keeps the walk
+    unpredictable but takes one TLB miss per 16 KB page instead of roughly one
+    per access. On the P cores the ordinary chase climbs from 5.4 ns at 2 MB to
+    11.3 ns at 16 MB; <code>pagechase</code> stays at 4.8–5.2 ns across that whole
+    range. So that rise is translation cost, not a cache running out. (Past
+    16 MB the control stops being clean, because finishing a page at a time hands
+    the hardware spatial locality, so I don't use it there.)
+  </p>
+
+  <h3>The channel between two separate processes</h3>
+  <p>
+    <code>native/channel</code> removes the browser demo's two shortcuts. The
+    sender and receiver are <strong>separate processes</strong> with no shared
+    memory, pipe or file. And there's <strong>no shared start time</strong>: the
+    sender waits a random 200–700 ms that only it knows, and the receiver has to
+    find the frame on its own. It sets a threshold from the data alone (Otsu's
+    method), finds the start by matching the preamble at every possible offset,
+    and uses the start-of-frame byte to settle the one-period ambiguity in an
+    alternating preamble. It decodes each bit by comparing its two halves
+    directly. It uses 20 ms chips (10 ms failed every time); the receiver samples
+    every 1 ms.
+  </p>
+  <p>
+    Each configuration was run 20 times:
+  </p>
+  <div class="tablewrap"><table style="min-width:600px">
+    <tr><th>Configuration</th><th>Clean decodes</th><th>Bit errors (runs with right length)</th></tr>
+    <tr><td>Default scheduling, message <code>cache</code></td><td class="num">20 / 20</td><td class="num">0 / 800</td></tr>
+    <tr><td>Default scheduling, <code>through the cache</code></td><td class="num">19 / 20</td><td class="num">2 / 2,720</td></tr>
+    <tr><td>Both ends steered to P cores</td><td class="num">7 / 20</td><td class="num">9 / 680</td></tr>
+    <tr><td>Sender on E cores, receiver on P, 8 MB probe</td><td class="num">0 / 20</td><td>no frame found</td></tr>
+    <tr><td>Sender on E cores, receiver on P, 64 MB probe</td><td class="num">4 / 20</td><td class="num">8 / 400</td></tr>
+  </table></div>
+  <p>What that shows, and what it doesn't:</p>
+  <ul>
+    <li><strong>The channel works between separate processes</strong> with no
+    agreed start time: 39 of 40 clean decodes on default scheduling. This is the
+    claim the browser demo could only argue. It's processes on one machine, not
+    VMs, so the VM claim still rests on published work.</li>
+    <li><strong>It works by eviction from a shared L2.</strong> With the sender on
+    the E cores and the receiver's 8 MB region in the P cores' separate L2, there
+    is no channel at all, even though the sender is still streaming 24 MB through
+    shared main memory. When the receiver probes 64 MB instead (too big for L2,
+    so its probe goes out to shared memory too), a weaker channel appears. That's
+    bandwidth or system-level-cache contention, and it's real, but much less
+    reliable.</li>
+    <li><strong>Steering both ends to the P cores made it worse</strong> (7/20).
+    I don't know why. One guess is that the scheduler then puts both on the same
+    core, or that higher priority invites more interruption, but I haven't tested
+    either.</li>
+    <li><strong>The checksum never passed on wrong text</strong> in these 100
+    runs. That wasn't true of my first decoder: its self-test found that letting
+    the checksum choose between candidate offsets made a wrong-but-passing result
+    about 10% likely under heavy noise. The decoder now ranks by preamble match
+    and uses the checksum only to verify. With an 8-bit checksum, a false pass
+    remains possible in principle.</li>
+    <li><strong>Speed.</strong> 20 ms chips give 25 bits/s raw, and about 12
+    bits/s of message once the frame overhead is counted. That's twice the
+    browser version, and well below what a tuned channel could do. I haven't
+    tried to optimise it.</li>
+  </ul>
+  <p>
+    The <code>cacHe</code> ghost from Part 7 turned up again in the P-core batch:
+    the same single case bit, flipped by noise, and caught by the checksum.
+  </p>
+
+  <!-- ============================================================ -->
+  <h2 id="part9">Part 9 — Replicate it yourself</h2>
 
   <p>
     Everything in the demo is in this repository. There's no framework and no
@@ -1205,7 +1331,8 @@ export function manchesterEncode(bits) {
     <li><code>src/cache/channel.js</code> — the live channel: the Worker sender, the receiver probe, and the pre-flight check.</li>
     <li><code>src/cache/channel-sim.js</code> — the seeded simulator behind replay mode, the defence dial and the tests.</li>
     <li><code>data/cache/fixtures.json</code> — the captured sweeps plotted in Part 4 and on the demo page.</li>
-    <li><code>test/</code> — unit tests for the codec, simulator, detector and window maths. The live paths are not unit-tested.</li>
+    <li><code>native/</code> — the C measurement (<code>chase.c</code>), the cross-process channel (<code>channel.c</code>) and <code>batch.sh</code>; <code>data/native/</code> holds their results.</li>
+    <li><code>test/</code> — unit tests for the codec, simulator, detector and window maths; <code>make -C native test</code> runs the C decoder's self-test on synthetic traces. The live paths themselves are not unit-tested.</li>
   </ul>
 
   <h3>How to run it</h3>
@@ -1215,7 +1342,9 @@ export function manchesterEncode(bits) {
     repository root:
   </p>
   <pre class="code"><code>npm test         <span class="cm"># unit tests (codec, framing, simulator, detector)</span>
-npm run build    <span class="cm"># rebuild the self-contained pages into dist/</span></code></pre>
+npm run build    <span class="cm"># rebuild the self-contained pages into dist/</span>
+make -C native   <span class="cm"># build the C tools (any C11 compiler)</span>
+./native/channel run hello --trace out.json   <span class="cm"># two processes, in-band sync</span></code></pre>
   <p>
     Then open <code>dist/cache.html</code> in a browser (double-click it; no
     server needed). Choose <strong>"Pointer chase — live on this machine"</strong>
@@ -1226,13 +1355,16 @@ npm run build    <span class="cm"># rebuild the self-contained pages into dist/<
 
   <h3>Experiments worth trying — including ones that could prove me wrong</h3>
   <ul>
-    <li><strong>Separate the two effects.</strong> Change <code>buildChain</code>
-    to link slots in order instead of shuffled. If that chain shows the staircase
-    too, overlapping (not prefetching) was doing most of the hiding in Part 4.</li>
-    <li><strong>Test the cross-process claim.</strong> Run the sender in a
-    different tab or a native program instead of a Worker. If the channel
-    survives, that's real evidence for the isolation argument in Part 7. If it
-    doesn't on your machine, that's worth knowing too.</li>
+    <li><strong>Check Part 8 on your machine.</strong> Run
+    <code>./native/batch.sh 20</code> and compare the rates. Different chips have
+    different cache layouts, and the cross-cluster result especially may not
+    hold elsewhere.</li>
+    <li><strong>Go further than processes.</strong> Run the sender and receiver
+    in two VMs, or two containers on one host. That's the step from this repo's
+    evidence to the cross-VM claim.</li>
+    <li><strong>Save a live browser trace.</strong> Run the browser channel in
+    Live mode and press <strong>Save trace</strong>. The JSON has every sample,
+    so a reader can check the decode instead of trusting the screenshot.</li>
     <li><strong>Measure real coarsening.</strong> Serve the page with
     cross-origin isolation headers (finer clock) and without, then compare live
     error rates at a fixed chip length. Part 5 predicts little difference in
@@ -1253,6 +1385,7 @@ npm run build    <span class="cm"># rebuild the self-contained pages into dist/<
     <li><strong>Cache timing as an attack primitive:</strong> Colin Percival, <em>Cache Missing for Fun and Profit</em> (2005) — very readable, and the paper that popularised cache covert channels between threads. <a href="https://www.daemonology.net/papers/htt.pdf">daemonology.net/papers/htt.pdf</a>. The classic Prime+Probe treatment is Osvik, Shamir &amp; Tromer, <em>Cache Attacks and Countermeasures: the Case of AES</em> (2006), <a href="https://eprint.iacr.org/2005/271">eprint.iacr.org/2005/271</a>.</li>
     <li><strong>Cache covert channels between virtual machines:</strong> Maurice et al., <em>Hello from the Other Side: SSH over Robust Cache Covert Channels in the Cloud</em> (NDSS 2017).</li>
     <li><strong>The 2026 red-team report:</strong> OpenAI, <a href="https://openai.com/index/securing-our-frontier-model-training-environment/"><em>Securing our frontier model training environment</em></a> (23 Oct 2026), section "Communicating across isolated tasks". Agents were given attack objectives, and in most of these tests were directed to a specific channel or given an encoding protocol.</li>
+    <li><strong>Apple's load address predictor:</strong> Kim, Genkin et al., <em>SLAP: Data Speculation Attacks via Load Address Prediction on Apple Silicon</em> (2025). Relevant to why the sequential dependent <code>chain</code> in Part 8 hides latency.</li>
     <li><strong>Cache attacks in the browser</strong> (closest to this demo): Oren et al., <em>The Spy in the Sandbox — Practical Cache Attacks in JavaScript</em> (2015), <a href="https://arxiv.org/abs/1502.07373">arxiv.org/abs/1502.07373</a>.</li>
     <li><strong>Spectre</strong> (why the timer defences exist): Kocher et al., <em>Spectre Attacks</em> (2019), <a href="https://spectreattack.com/spectre.pdf">spectreattack.com/spectre.pdf</a>.</li>
     <li><strong>Covert &amp; side channels, background:</strong> Wikipedia, <a href="https://en.wikipedia.org/wiki/Covert_channel">Covert channel</a> and <a href="https://en.wikipedia.org/wiki/Side-channel_attack">Side-channel attack</a>.</li>

@@ -104,6 +104,7 @@ export function initChannel() {
     statChecksum: $('chChecksum'),
     liveNote: $('chLiveNote'),
     source: $('chSource'),
+    save: $('chSave'),
   };
 
   // The provenance badge: tells the viewer, unmissably, whether what they are
@@ -126,6 +127,62 @@ export function initChannel() {
 
   let anim = null;
   let lastFrame = null; // { result, truthChips, revealed } — repainted on resize
+  let lastTrace = null; // the most recent result, in the shared trace format
+
+  // ---- Save trace --------------------------------------------------------
+  // Exports exactly what the page decoded from, in the same JSON shape as
+  // native/channel.c --trace ("cache-covert-channel/trace@1"), so a live run
+  // can be kept as evidence and checked offline rather than just reported.
+  function buildTrace(result, truthChips, ber, pRaw, capacity) {
+    const live = result.source === 'live';
+    const th = result.calibration ? result.calibration.threshold : null;
+    return {
+      format: 'cache-covert-channel/trace@1',
+      source: live ? 'browser-live' : 'browser-simulated',
+      machine: navigator.userAgent,
+      logical_cores: navigator.hardwareConcurrency || null,
+      captured: new Date().toISOString(),
+      params: {
+        chip_ms: CHIP_MS,
+        fec: els.fec.checked,
+        ...(live
+          ? { probe_mb: 8, probe_steps: 60000, sender_buf_mb: 24 }
+          : { model: { ...MODEL }, quality: Number(els.quality.value), coarsen_model: els.coarsen.checked, seed: 12345 }),
+      },
+      sync: live
+        ? 'out-of-band: shared start instant passed to the worker via postMessage'
+        : 'n/a (simulation)',
+      note: result.note || null,
+      decoded: {
+        text: result.text || '',
+        raw_text_no_fec: result.rawText != null ? result.rawText : null,
+        checksum_ok: !!result.checksumOk,
+        threshold_ns: th,
+        preamble_separation: result.calibration ? result.calibration.separation : null,
+      },
+      sent: els.message.value,
+      payload_bit_errors_rate: result.text ? ber : null,
+      raw_bit_error_prob: pRaw,
+      capacity_bps_estimate: Math.round(capacity * 1000) / 1000,
+      raw_bitrate_bps: rawBitrate,
+      truth_chips: truthChips ? Array.from(truthChips) : null,
+      chips: th == null ? null : result.samples.map((v) => (v > th ? 1 : 0)),
+      samples_ns_per_access: result.samples.map((v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null)),
+    };
+  }
+
+  function saveTrace() {
+    if (!lastTrace) return;
+    const blob = new Blob([JSON.stringify(lastTrace, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a');
+    const stamp = lastTrace.captured.replace(/[:.]/g, '-').slice(0, 19);
+    a.href = URL.createObjectURL(blob);
+    a.download = `cache-channel-trace-${lastTrace.source}-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
 
   function setStatus(msg, cls = '') { els.status.textContent = msg; els.status.className = 'status ' + cls; }
 
@@ -200,7 +257,10 @@ export function initChannel() {
     els.decodedRaw.textContent = result.rawText != null ? result.rawText : result.text;
     els.statBitrate.textContent = rawBitrate.toFixed(1) + ' b/s';
     els.statBer.textContent = result.text ? (ber * 100).toFixed(1) + '%' : 'no decode';
-    els.statCapacity.textContent = pRaw == null ? '0.0 b/s' : channelCapacity(pRaw, rawBitrate).toFixed(1) + ' b/s';
+    const capacity = pRaw == null ? 0 : channelCapacity(pRaw, rawBitrate);
+    els.statCapacity.textContent = capacity.toFixed(1) + ' b/s';
+    lastTrace = buildTrace(result, truthChips, ber, pRaw, capacity);
+    if (els.save) els.save.disabled = false;
     els.statChecksum.textContent = result.checksumOk ? 'pass' : 'FAIL';
     els.statChecksum.className = result.checksumOk ? 'pass' : 'fail';
     const live = result.source === 'live';
@@ -235,6 +295,7 @@ export function initChannel() {
   }
 
   function runReplay(note) {
+    if (els.save) els.save.disabled = true;
     const msg = els.message.value.slice(0, 16) || 'cache';
     const fec = els.fec.checked;
     const { chips } = encodeFrame(msg, { fec });
@@ -274,6 +335,7 @@ export function initChannel() {
     const fec = els.fec.checked;
     const { chips } = encodeFrame(msg, { fec });
     els.run.disabled = true;
+    if (els.save) els.save.disabled = true;
     setBadge('live');
 
     const MAX_ATTEMPTS = 2;
@@ -336,6 +398,7 @@ export function initChannel() {
   }
 
   els.run.addEventListener('click', run);
+  if (els.save) els.save.addEventListener('click', saveTrace);
   els.quality.addEventListener('input', () => { els.qualityOut.textContent = els.quality.value + '%'; });
   els.coarsen.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });
   els.quality.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });

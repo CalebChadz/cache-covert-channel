@@ -2,3 +2,5 @@
 node_modules/
 *.log
 .vscode/
+native/chase
+native/channel

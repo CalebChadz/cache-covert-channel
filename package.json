@@ -17,7 +17,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test \"test/*.test.js\"",
-    "start": "node scripts/build.mjs && echo 'Open dist/cache.html in your browser'"
+    "start": "node scripts/build.mjs && echo 'Open dist/cache.html in your browser'",
+    "native": "make -C native",
+    "test:native": "make -C native test"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
