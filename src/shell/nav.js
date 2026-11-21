@@ -5,7 +5,7 @@
 // clicked from file:// and served from a subpath on GitHub Pages.
 
 // Set this to your repo once pushed; it drives the "GitHub" link in the nav.
-export const REPO_URL = 'https://github.com/USER/cache-covert-channel';
+export const REPO_URL = 'https://github.com/CalebChadz/cache-covert-channel';
 
 export const PAGES = [
   { id: 'index',   href: 'index.html',   nav: 'Overview' },
