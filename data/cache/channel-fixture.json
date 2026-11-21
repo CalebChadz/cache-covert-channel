@@ -1,0 +1,12 @@
+{
+  "label": "Covert-channel replay",
+  "provenance": "Deterministic simulation calibrated to measured hardware: idle 8.7 ns/access, saturated 90.3 ns/access, captured on the study machine (Chromium 152, A18 Pro-class, non-isolated, no SharedArrayBuffer) on 2026-09-12. The replay is a model of those figures, not a raw capture, so the demo is identical on every machine; the live mode is the real thing.",
+  "defaultMessage": "cache",
+  "model": { "idleNs": 8.7, "busyNs": 90.3 },
+  "measuredContrast": {
+    "idleMedianNs": 8.7,
+    "busyMedianNs": 90.3,
+    "separationX": 10.4,
+    "note": "Sustained-contention detection was rock solid at ~10x. Per-bit decoding is the hard part; see BUGS/scoping."
+  }
+}

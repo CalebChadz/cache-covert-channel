@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works — reading a CPU cache with a stopwatch</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #080b12; --panel: #0e141f; --panel-2: #121b29; --line: #243247;
+  --text: #cdd9e5; --muted: #6c819b; --accent: #22d3ee; --accent2: #c04cff;
+  --ok: #37f39a; --err: #ff3b6b; --warn: #ffb020;
+  --glow: 0 0 0.5px currentColor, 0 0 8px rgba(34,211,238,0.35);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Code", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 var(--mono);
+  background-image:
+    radial-gradient(1200px 600px at 80% -10%, rgba(34,211,238,0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(192,76,255,0.05), transparent 60%);
+  background-attachment: fixed;
+}
+/* faint scanlines over the whole page */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.016) 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
+}
+::selection { background: rgba(34,211,238,0.3); color: #fff; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-shadow: var(--glow); }
+
+/* ---- site chrome ---- */
+.sitenav {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 11px 24px; border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(18,27,41,0.9), rgba(8,11,18,0.7));
+  backdrop-filter: blur(6px); position: sticky; top: 0; z-index: 50;
+}
+.sitenav .brand { font-weight: 700; letter-spacing: 0.02em; margin-right: 4px; }
+.sitenav .brand a { color: var(--text); }
+.sitenav .brand a::before { content: "▚ "; color: var(--accent); text-shadow: var(--glow); }
+.sitenav a { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.sitenav a:hover { color: var(--accent); }
+.sitenav a.on { color: var(--text); }
+.sitenav a.on::before { content: "› "; color: var(--accent); }
+.sitenav .spacer { flex: 1; }
+.sitenav .ghlink { border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; color: var(--muted); }
+.sitenav .ghlink:hover { border-color: var(--accent); color: var(--accent); }
+
+header.page { padding: 22px 24px 14px; border-bottom: 1px solid var(--line); position: relative; }
+header.page h1 {
+  margin: 0; font-size: 19px; font-weight: 700; letter-spacing: 0.01em; color: var(--text);
+}
+header.page h1::before { content: "$ "; color: var(--accent); text-shadow: var(--glow); }
+header.page p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+
+/* ---- two-column demo layout ---- */
+.wrap { display: grid; grid-template-columns: 300px 1fr; gap: 0; min-height: calc(100vh - 120px); }
+.panel { padding: 20px 24px; border-right: 1px solid var(--line); background: rgba(14,20,31,0.4); }
+.stage { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+fieldset { border: 0; padding: 0; margin: 0 0 20px; }
+legend {
+  padding: 0; margin-bottom: 9px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.14em; color: var(--accent);
+}
+legend::before { content: "// "; opacity: 0.6; }
+label { display: block; margin-bottom: 11px; font-size: 12px; color: var(--muted); }
+label span { display: block; margin-bottom: 4px; letter-spacing: 0.02em; }
+label.inline { display: flex; align-items: center; gap: 8px; }
+label.inline input { width: auto; accent-color: var(--accent); }
+input, select, button, textarea {
+  width: 100%; padding: 8px 10px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; font: inherit; font-size: 13px;
+}
+input[type="range"] { padding: 0; accent-color: var(--accent); }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 10px rgba(34,211,238,0.25);
+}
+button { cursor: pointer; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 12px; transition: box-shadow .15s, border-color .15s, color .15s; }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 10px rgba(34,211,238,0.2); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary {
+  background: linear-gradient(180deg, rgba(34,211,238,0.18), rgba(34,211,238,0.06));
+  border-color: var(--accent); color: var(--accent); text-shadow: var(--glow);
+}
+button.primary:hover:not(:disabled) { box-shadow: 0 0 16px rgba(34,211,238,0.45); color: #c8fbff; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* ---- stats strip ---- */
+.stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; }
+.stat {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  position: relative; overflow: hidden;
+}
+.stat::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); opacity: 0.6; }
+.stat b { display: block; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+.stat span { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+
+/* ---- canvas surfaces ---- */
+.canvasBox {
+  flex: 1; min-height: 300px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+}
+.canvasBox.fixed { flex: none; }
+.canvasBox canvas { width: 100%; height: 100%; display: block; }
+.chartBox { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.chartBox b { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 700; }
+.chartBox canvas { width: 100%; display: block; }
+
+.status { font-size: 13px; color: var(--muted); min-height: 20px; }
+.status::before { content: "> "; color: var(--accent); }
+.status.ok { color: var(--ok); } .status.ok::before { color: var(--ok); }
+.status.err { color: var(--err); } .status.err::before { color: var(--err); }
+.status.warn { color: var(--warn); } .status.warn::before { color: var(--warn); }
+
+.legendkey { display: flex; gap: 14px; font-size: 12px; color: var(--muted); align-items: center; flex-wrap: wrap; }
+.sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; box-shadow: 0 0 6px currentColor; }
+.note { font-size: 12px; color: var(--muted); margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.note code, code { font-family: var(--mono); font-size: 0.92em; background: var(--panel-2); color: var(--accent); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ---- prose (landing + explainers) ---- */
+.prose { max-width: 760px; padding: 30px 24px 64px; }
+.prose h2 { font-size: 15px; margin: 34px 0 9px; letter-spacing: 0.01em; color: var(--text); }
+.prose h2::before { content: "## "; color: var(--accent); opacity: 0.7; }
+.prose h3 { font-size: 12px; margin: 24px 0 7px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; }
+.prose p { margin: 0 0 13px; color: var(--text); }
+.prose ul { margin: 0 0 13px; padding-left: 20px; }
+.prose li { margin-bottom: 6px; }
+.prose li::marker { color: var(--accent); }
+.prose em { color: #e7eef6; font-style: normal; border-bottom: 1px dotted var(--muted); }
+.prose strong { color: #fff; }
+.prose table { border-collapse: collapse; font-size: 13px; margin: 6px 0 18px; width: 100%; }
+.prose th, .prose td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+.prose th { background: var(--panel); font-weight: 600; color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; }
+.prose td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); color: var(--accent); }
+
+/* ---- landing cards ---- */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; margin: 20px 0 8px; }
+.card {
+  border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px;
+  background: linear-gradient(180deg, var(--panel), rgba(8,11,18,0.6)); color: inherit; display: block;
+  position: relative; transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.card:hover { border-color: var(--accent); box-shadow: 0 0 22px rgba(34,211,238,0.18); transform: translateY(-2px); }
+.card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 700; color: var(--text); text-transform: none; letter-spacing: 0; }
+.card h3::before { content: "▶ "; color: var(--accent); font-size: 11px; }
+.card p { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.card .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.card .tag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+  border: 1px solid var(--line); border-radius: 20px; padding: 3px 9px; color: var(--muted); background: var(--bg);
+}
+
+.callout {
+  border-left: 3px solid var(--accent); background: linear-gradient(90deg, rgba(34,211,238,0.07), transparent);
+  padding: 13px 16px; margin: 18px 0; font-size: 13px; border-radius: 0 6px 6px 0;
+}
+.callout.warn { border-left-color: var(--warn); background: linear-gradient(90deg, rgba(255,176,32,0.08), transparent); }
+.callout.danger { border-left-color: var(--err); background: linear-gradient(90deg, rgba(255,59,107,0.08), transparent); }
+.callout p:last-child { margin-bottom: 0; }
+.callout strong { color: #fff; }
+
+/* chips for the honest-framing banner */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 2px; }
+.chip {
+  font-size: 11px; letter-spacing: 0.04em; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 20px; padding: 4px 11px; background: var(--panel);
+}
+.chip b { color: var(--ok); font-weight: 700; }
+
+.lede { font-size: 15px; line-height: 1.65; color: #dce6f1; }
+
+footer.site {
+  border-top: 1px solid var(--line); padding: 18px 24px; color: var(--muted); font-size: 12px;
+}
+footer.site code { background: var(--panel-2); }
+
+@media (max-width: 820px) {
+  .wrap { grid-template-columns: 1fr; }
+  .panel { border-right: 0; border-bottom: 1px solid var(--line); }
+  .stats { grid-auto-flow: row; grid-template-columns: repeat(2, 1fr); }
+}
+
+.prose { max-width: 760px; }
+.prose .lede { font-size: 15px; line-height: 1.6; }
+.prose h2 { font-size: 17px; margin-top: 40px; }
+.prose h3 { font-size: 13px; }
+.prose figure { margin: 22px 0; }
+.prose figure svg { width: 100%; height: auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.prose figcaption { font-size: 12px; color: var(--muted); margin-top: 7px; text-align: center; }
+pre.code {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.55; margin: 6px 0 4px;
+}
+pre.code .cm { color: var(--muted); }
+pre.code b { color: var(--accent); font-weight: 600; }
+.filetag { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 16px 0 0; }
+.tocbar { font-size: 12px; color: var(--muted); }
+.tocbar a { color: var(--accent); text-decoration: none; }
+.keyidea { border-left: 3px solid var(--ok); background: var(--panel); padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 13px; }
+.keyidea p:last-child { margin-bottom: 0; }
+</style>
+</head>
+<body>
+<nav class="sitenav">
+    <span class="brand"><a href="index.html">cache-covert-channel</a></span>
+    <a href="index.html">Overview</a>
+    <a href="cache.html">Live demo</a>
+    <a href="article.html" class="on">How it works</a>
+    <span class="spacer"></span>
+  </nav>
+
+<header class="page">
+  <h1>How it works: reading a CPU cache with a stopwatch</h1>
+  <p>A from-scratch tour of the cache side-channel and covert-channel demos on this site — what the machine is really doing, and why the first version lied to me for six years</p>
+</header>
+
+<div class="prose">
+  <p class="lede">
+    This is the explainer for the <a href="cache.html">Cache Side Channel</a> page.
+    That page lets you run the experiment; this one teaches the ideas behind it,
+    starting from "what is a cache" and ending at two programs talking to each
+    other through nothing but shared silicon. No security background assumed. If
+    you can read a few lines of JavaScript, you can follow all of it — and, if you
+    like, reproduce it yourself from the code in this repository.
+  </p>
+
+  <div class="keyidea">
+    <p>
+      <strong>The honest framing, up front.</strong> Nothing here is an attack on
+      anyone. It measures <em>my own</em> computer, and later has two of my own
+      programs cooperate on purpose. It leaks no one's data, uses techniques that
+      have been in the textbooks since the 1990s, and is <strong>not</strong> a
+      vulnerability or a CVE. It is a demonstration of how the physical machine
+      behaves — which is exactly the kind of thing a security analyst should be
+      able to reason about.
+    </p>
+  </div>
+
+  <p class="tocbar">
+    Jump to:
+    <a href="#part1">the memory-speed gap</a> ·
+    <a href="#part2">hits, misses &amp; timing</a> ·
+    <a href="#part3">measuring the hierarchy</a> ·
+    <a href="#part4">the plot twist</a> ·
+    <a href="#part5">the fix</a> ·
+    <a href="#part6">reality check</a> ·
+    <a href="#part7">the covert channel</a> ·
+    <a href="#part8">replicate it</a> ·
+    <a href="#refs">further reading</a>
+  </p>
+
+  <!-- ============================================================ -->
+  <h2 id="part1">Part 1 — Why computers need a cache at all</h2>
+
+  <p>
+    A modern CPU can do a few billion operations a second. Each operation usually
+    needs a piece of data, and most data lives in main memory (RAM). Here is the
+    uncomfortable fact the whole story hangs on: <strong>the CPU is far faster
+    than the memory it reads from.</strong> Fetching a value from RAM can take the
+    processor the equivalent of a couple of hundred wasted cycles — hundreds of
+    ticks of doing nothing but waiting. This is called the <em>memory-speed
+    gap</em>, and it has been getting wider for decades.
+  </p>
+
+  <p>
+    An analogy. Imagine a chef who can chop and stir almost instantly, but whose
+    ingredients are stored in a warehouse a ten-minute drive away. It doesn't
+    matter how fast the chef is; if every carrot requires a round trip to the
+    warehouse, the kitchen crawls. The obvious fix is to keep the ingredients you
+    are using <em>right now</em> on the counter, the ones you'll need soon in the
+    fridge, and only the bulk supply in the warehouse. That is exactly what a CPU
+    cache is: a small, very fast store of memory physically close to the
+    processor, holding copies of the data it is most likely to need next.
+  </p>
+
+  <p>
+    Caches work because real programs are predictable in two ways. They tend to
+    reuse the same data soon after using it (<em>temporal locality</em>), and they
+    tend to use data that sits near data they just used (<em>spatial locality</em>).
+    So the hardware keeps recently-touched memory close, and it fetches memory in
+    small blocks — a <strong>cache line</strong>, usually 64 bytes — rather than
+    one byte at a time, betting you'll want the neighbours too.
+  </p>
+
+  <h3>The hierarchy: smaller is faster</h3>
+
+  <p>
+    You can't have it all. Fast memory is expensive and physically has to be tiny
+    and close to the core; big memory is cheap but far away and slow. So chips
+    build a <em>hierarchy</em> — several caches of increasing size and decreasing
+    speed — and let data fall through it. The counter, the fridge, the pantry, the
+    warehouse.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 720 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pyramid of the memory hierarchy from CPU registers down to DRAM, showing size increasing and speed decreasing toward the bottom.">
+      <text x="360" y="26" text-anchor="middle" style="font:600 13px sans-serif;fill:var(--text)">The memory hierarchy</text>
+      <!-- pyramid rows: [y, half-width, label, size, speed] -->
+      <!-- row 1 registers -->
+      <polygon points="330,44 390,44 400,80 320,80" style="fill:var(--accent);opacity:0.92"/>
+      <text x="360" y="67" text-anchor="middle" style="font:600 11px sans-serif;fill:#fff">registers</text>
+      <!-- row 2 L1 -->
+      <polygon points="318,82 402,82 416,124 304,124" style="fill:var(--accent);opacity:0.72"/>
+      <text x="360" y="108" text-anchor="middle" style="font:600 12px sans-serif;fill:#fff">L1 cache</text>
+      <!-- row 3 L2 -->
+      <polygon points="302,126 418,126 436,174 284,174" style="fill:var(--accent);opacity:0.55"/>
+      <text x="360" y="155" text-anchor="middle" style="font:600 12px sans-serif;fill:#fff">L2 cache</text>
+      <!-- row 4 SLC / last-level -->
+      <polygon points="282,176 438,176 460,232 260,232" style="fill:var(--accent);opacity:0.38"/>
+      <text x="360" y="209" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">L3 / system-level cache (SLC)</text>
+      <!-- row 5 DRAM -->
+      <polygon points="258,234 462,234 490,300 230,300" style="fill:var(--line);opacity:0.9"/>
+      <text x="360" y="271" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">main memory (DRAM)</text>
+      <!-- left axis: size -->
+      <text x="150" y="60" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~1 KB</text>
+      <text x="150" y="108" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">tens of KB</text>
+      <text x="150" y="155" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">a few MB</text>
+      <text x="150" y="207" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">tens of MB</text>
+      <text x="150" y="271" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">many GB</text>
+      <text x="150" y="330" text-anchor="middle" style="font:600 10px sans-serif;fill:var(--muted)">SIZE ↑</text>
+      <!-- right axis: speed -->
+      <text x="585" y="60" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">&lt;1 ns</text>
+      <text x="585" y="108" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~1 ns</text>
+      <text x="585" y="155" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~5 ns</text>
+      <text x="585" y="207" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~10–30 ns</text>
+      <text x="585" y="271" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~80+ ns</text>
+      <text x="585" y="330" text-anchor="middle" style="font:600 10px sans-serif;fill:var(--muted)">SLOWER ↓</text>
+    </svg>
+    <figcaption>
+      Each level down is bigger and slower. The nanosecond figures on the right
+      are from my own machine (measured in Part 3); yours will differ but the
+      <em>shape</em> is universal.
+    </figcaption>
+  </figure>
+
+  <p>
+    L1 is tiny (tens of kilobytes) and answers in about a nanosecond. L2 is
+    larger and a few times slower. Below that sits a last-level cache — often
+    called the L3 or, on Apple silicon, a <em>system-level cache</em> (SLC) —
+    shared between cores and larger still. Miss all of those and you pay the full
+    trip to DRAM. When the CPU looks for a value, it checks each level in turn;
+    the first level that has it answers.
+  </p>
+
+  <!-- ============================================================ -->
+  <h2 id="part2">Part 2 — Hits, misses, and what timing tells you</h2>
+
+  <p>
+    When the data the CPU wants is already in a cache, that's a <strong>cache
+    hit</strong> — fast. When it isn't, that's a <strong>cache miss</strong>, and
+    the request falls to the next level down, costing more time. The deeper it has
+    to go, the longer you wait.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two timelines comparing a fast cache hit against a slow cache miss that goes all the way to DRAM.">
+      <text x="360" y="24" text-anchor="middle" style="font:600 13px sans-serif;fill:var(--text)">One memory read: hit vs miss</text>
+      <!-- hit -->
+      <text x="20" y="76" style="font:12px sans-serif;fill:var(--text)">cache HIT</text>
+      <rect x="130" y="62" width="26" height="22" rx="3" style="fill:var(--ok)"/>
+      <text x="168" y="78" style="font:11px sans-serif;fill:var(--muted)">~1 ns — data is on the counter, CPU keeps working</text>
+      <!-- miss -->
+      <text x="20" y="140" style="font:12px sans-serif;fill:var(--text)">cache MISS</text>
+      <rect x="130" y="126" width="26" height="22" rx="3" style="fill:var(--ok)"/>
+      <rect x="158" y="126" width="430" height="22" rx="3" style="fill:var(--err);opacity:0.22"/>
+      <line x1="158" y1="126" x2="158" y2="148" style="stroke:var(--err);stroke-width:1"/>
+      <text x="373" y="141" text-anchor="middle" style="font:11px sans-serif;fill:var(--err)">~80 ns — CPU stalls, waiting on the trip to DRAM</text>
+      <!-- scale note -->
+      <text x="130" y="188" style="font:11px sans-serif;fill:var(--muted)">The green block (the check) is the same in both. The red is pure waiting — and it is roughly 80× longer.</text>
+      <text x="130" y="206" style="font:11px sans-serif;fill:var(--muted)">That size difference is the entire signal every experiment on this site depends on.</text>
+    </svg>
+    <figcaption>A hit and a miss differ by tens of nanoseconds — small in human terms, enormous and measurable in machine terms.</figcaption>
+  </figure>
+
+  <div class="keyidea">
+    <p>
+      <strong>The one idea to hold onto:</strong> the time a memory read takes
+      tells you <em>where the data was</em>. Fast means it was in a nearby cache;
+      slow means it had to come from far away. So a clock is secretly a probe into
+      the memory hierarchy. Nothing in a CPU offers an API that says "your L2 is 4
+      MB" — but the timing gives it away. Information leaking through a physical
+      property of the machine, rather than through an interface designed to
+      provide it, is what "side channel" means.
+    </p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="part3">Part 3 — Measuring the hierarchy by timing</h2>
+
+  <p>
+    Here is the plan, and it is beautifully simple. Take a chunk of memory of some
+    size — call it the <em>working set</em> — and read through it over and over,
+    timing how long the average read takes. Then do it again with a bigger chunk,
+    and bigger, and bigger.
+  </p>
+
+  <p>
+    While the whole working set fits inside a cache level, every read is a hit and
+    the average is fast. The moment the working set grows past that level's
+    capacity, the reads start spilling to the next level down and the average
+    jumps. <strong>The size at which the timing jumps is the capacity of that
+    cache level.</strong> Plot average latency against working-set size and you
+    get a staircase; each step — each "knee" in the curve — marks a boundary in
+    the hierarchy.
+  </p>
+
+  <p>
+    There is one trick that makes or breaks this, and it is the pivot of the whole
+    story, so hold the thought: <em>how</em> you walk through the memory matters
+    enormously. The corrected version of the experiment uses a technique called a
+    <strong>pointer chase</strong> (also: a dependent-load chain). You scatter the
+    working set into a single long loop, where the value stored at each slot is the
+    location of the next slot to visit. To take a step you must read the current
+    slot to find out where to go next.
+  </p>
+
+  <p class="filetag">src/cache/chase.js — laying out the loop</p>
+  <pre class="code"><code><span class="cm">// Lay out a single random cycle over `windowBytes` worth of cache lines,</span>
+<span class="cm">// so slot perm[0] -&gt; perm[1] -&gt; ... -&gt; perm[n-1] -&gt; back to perm[0].</span>
+export function buildChain(buf, windowBytes, seed = 12345) {
+  const n = Math.floor(windowBytes / LINE_BYTES);   <span class="cm">// one slot per 64-byte line</span>
+  const perm = new Int32Array(n);
+  for (let i = 0; i &lt; n; i++) perm[i] = i;
+  <span class="cm">// ... shuffle perm[] into a random order ...</span>
+  for (let i = 0; i &lt; n; i++) {
+    <b>buf[perm[i] * STRIDE] = perm[(i + 1) % n] * STRIDE;</b>  <span class="cm">// each slot stores the NEXT slot's index</span>
+  }
+  return n;
+}</code></pre>
+
+  <p>
+    Then the measurement itself is just this loop, timed:
+  </p>
+
+  <p class="filetag">src/cache/chase.js — the timed region</p>
+  <pre class="code"><code>const t0 = performance.now();
+for (let i = 0; i &lt; steps; i++) <b>p = buf[p];</b>   <span class="cm">// the address of the next read comes FROM the last read</span>
+const t1 = performance.now();
+return ((t1 - t0) * 1e6) / steps;      <span class="cm">// total time / number of hops = nanoseconds per access</span></code></pre>
+
+  <p>
+    That single line, <code>p = buf[p]</code>, is the heart of it. Each read
+    depends on the result of the one before, so the CPU cannot run ahead — it must
+    finish read <em>N</em> before it even knows the address of read <em>N+1</em>.
+    Every access therefore pays the true latency of wherever that slot currently
+    lives. (Why that matters so much is Part 4.) We don't time a single read —
+    the browser's clock is far too coarse for that — we time hundreds of thousands
+    of them and divide, which is why a blunt clock is fine here.
+  </p>
+
+  <p>
+    Turning the curve into named boundaries is a separate, careful step. The 2020
+    original declared a cache size at the first point where latency rose 1.5× —
+    with no repeats, no noise floor, and no check that the curve had any real range
+    at all. The rewrite refuses to guess:
+  </p>
+
+  <p class="filetag">src/cache/detect.js — refusing to invent a boundary</p>
+  <pre class="code"><code>export function detectKnees(points, { minRatio = 1.4, minRange = 3 } = {}) {
+  const range = dynamicRange(points);   <span class="cm">// slowest reading / fastest reading</span>
+  <b>if (range &lt; minRange) {</b>
+    <span class="cm">// A flat curve has no hierarchy to report. Naming a boundary here</span>
+    <span class="cm">// would be inventing one — which is exactly the original's bug.</span>
+    return { knees: [], range, confident: false };
+  }
+  <span class="cm">// otherwise: flag every step whose ratio clears minRatio as a knee</span>
+}</code></pre>
+
+  <p>
+    Why that guard exists at all is the next part.
+  </p>
+
+  <!-- ============================================================ -->
+  <h2 id="part4">Part 4 — The plot twist: the original was measuring the wrong thing</h2>
+
+  <p>
+    When I first ported the 2020 program faithfully and ran it, the curve came out
+    <strong>flat</strong>. Not roughly flat — <em>flat</em>: about 0.55 to 0.88
+    nanoseconds per access from 16 KB all the way to 32 MB, a two-thousand-fold
+    range of working-set sizes with no knee anywhere. According to its own
+    measurement, this machine had no cache hierarchy at all. Something was clearly
+    wrong, and it took me a while to accept what.
+  </p>
+
+  <p>
+    The original walked memory with a <strong>linear stride</strong>: read byte 0,
+    then byte 64, then byte 128, straight through in order. In JavaScript, the
+    faithful port of that inner loop is:
+  </p>
+
+  <p class="filetag">src/cache/linear.js — the faithful 2020 pass</p>
+  <pre class="code"><code>const modu = windowBytes - 1;
+for (let i = 0; i &lt; steps; i++) {
+  <b>bytes[(i * 64) &amp; modu] &amp;= 1;</b>   <span class="cm">// address = i*64, wrapped to the window: 0, 64, 128, 192, ...</span>
+}</code></pre>
+
+  <p>
+    That access pattern is a perfectly straight line through memory — and that is
+    precisely the problem. Modern CPUs contain a <strong>hardware
+    prefetcher</strong>: a little unit whose entire job is to watch your memory
+    accesses, spot regular patterns, and fetch the upcoming data into cache
+    <em>before</em> the program asks for it. A straight 64-byte march is the most
+    predictable pattern that exists. The prefetcher recognises it instantly and
+    streams the next lines in ahead of demand.
+  </p>
+
+  <p>
+    Back to the kitchen: the prefetcher is an assistant who has learned your
+    routine. Because you always reach for the next ingredient down the row, the
+    assistant runs to the warehouse and lines them all up on the counter before
+    you ask. The misses still happen — the data still had to come from far away —
+    but you never <em>wait</em> for them, so their latency never shows up in your
+    timing. The 2020 program wasn't measuring cache capacity. It was measuring how
+    fast the assistant could stream ingredients in a straight line: sequential
+    memory <em>bandwidth</em>, which is roughly constant regardless of working-set
+    size. That is why the line is flat.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 720 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Latency versus working-set size on a log-log plot, measured on the author's hardware. The linear-stride curve stays flat near one and a half nanoseconds. The pointer-chase curve rises in steps to over a hundred nanoseconds, with knees marking cache boundaries.">
+      <!-- axes -->
+      <line x1="70" y1="40" x2="70" y2="330" style="stroke:var(--line);stroke-width:1"/>
+      <line x1="70" y1="330" x2="690" y2="330" style="stroke:var(--line);stroke-width:1"/>
+      <text x="360" y="378" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">working-set size (log scale)</text>
+      <text x="20" y="185" text-anchor="middle" transform="rotate(-90 20 185)" style="font:11px sans-serif;fill:var(--muted)">ns per access (log)</text>
+      <!-- y ticks -->
+      <text x="62" y="296" text-anchor="end" style="font:10px sans-serif;fill:var(--muted)">1</text>
+      <line x1="66" y1="293.3" x2="690" y2="293.3" style="stroke:var(--line);stroke-width:0.5;opacity:0.5"/>
+      <text x="62" y="174" text-anchor="end" style="font:10px sans-serif;fill:var(--muted)">10</text>
+      <line x1="66" y1="171.5" x2="690" y2="171.5" style="stroke:var(--line);stroke-width:0.5;opacity:0.5"/>
+      <text x="62" y="53" text-anchor="end" style="font:10px sans-serif;fill:var(--muted)">100</text>
+      <line x1="66" y1="49.6" x2="690" y2="49.6" style="stroke:var(--line);stroke-width:0.5;opacity:0.5"/>
+      <!-- x ticks -->
+      <text x="117.7" y="345" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">32 KB</text>
+      <text x="213.1" y="345" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">128 KB</text>
+      <text x="356.2" y="345" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">1 MB</text>
+      <text x="546.9" y="345" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">16 MB</text>
+      <text x="594.6" y="345" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">32 MB</text>
+      <text x="690" y="345" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">128 MB</text>
+      <!-- L1 knee guide, and the 16–32 MB lift band (L2 → SLC → DRAM) -->
+      <line x1="213.1" y1="40" x2="213.1" y2="330" style="stroke:var(--accent);stroke-width:0.7;stroke-dasharray:3 3;opacity:0.6"/>
+      <rect x="546.9" y="40" width="47.7" height="290" style="fill:var(--accent);opacity:0.08"/>
+      <!-- pointer chase curve (measured) -->
+      <polyline points="70.0,265.2 97.9,259.4 117.7,268.5 145.6,271.9 165.4,268.5 193.3,271.9 213.1,268.5 241.0,217.4 260.8,213.7 288.7,204.1 308.5,204.1 336.4,203.1 356.2,200.3 384.1,200.3 403.8,199.4 431.7,194.3 451.5,187.4 479.4,183.3 499.2,181.7 527.1,175.6 546.9,163.0 574.8,136.8 594.6,99.5 622.5,83.2 642.3,66.7 670.2,57.0 690.0,47.3"
+        style="fill:none;stroke:var(--accent);stroke-width:2.5"/>
+      <!-- the ~24 MB SLC shoulder -->
+      <circle cx="574.8" cy="136.8" r="3.5" style="fill:var(--accent)"/>
+      <!-- linear curve (2020 mode — flat; illustrative) -->
+      <polyline points="70.0,304.5 165.4,320.4 260.8,305.8 356.2,307.8 451.5,307.8 546.9,307.8 594.6,300.1"
+        style="fill:none;stroke:var(--err);stroke-width:2.5"/>
+      <!-- annotations -->
+      <text x="360" y="322" style="font:11px sans-serif;fill:var(--err)">2020 linear stride — flat: the prefetcher hides every miss</text>
+      <text x="470" y="150" style="font:600 11px sans-serif;fill:var(--accent)">pointer chase</text>
+      <text x="248" y="252" style="font:10px sans-serif;fill:var(--accent)">knee ≈ L1d (128 KB)</text>
+      <text x="612" y="132" style="font:10px sans-serif;fill:var(--accent)">~24 MB SLC</text>
+      <text x="540" y="285" text-anchor="end" style="font:10px sans-serif;fill:var(--accent)">L2 → SLC → DRAM lift (16–32 MB)</text>
+    </svg>
+    <figcaption>
+      Measured on the author's own hardware (Chrome 153, non-isolated). The red
+      line (2020 linear stride) reports no hierarchy. The blue line (pointer chase)
+      climbs ~70× — from ~1.6 ns in L1 to 104.5 ns at 128 MB — with a sharp knee at
+      the 128 KB L1 boundary and a staircase through L2, an intermediate ~24 MB
+      system-level-cache shoulder, and DRAM. The only difference between the two is
+      the order the reads happen in.
+    </figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <p>
+      This is the most consequential finding in the whole repository, and it is
+      worth stating plainly: <strong>the 2020 program's reported cache size was
+      never actually derived from its measurement.</strong> Its "detector" was
+      picking the first spot where a flat, noisy line happened to twitch 1.5×
+      upward — reporting scheduler jitter as a cache boundary. It printed a
+      confident number for six years, and that number meant nothing. I only found
+      out by rebuilding it and measuring, not by reading it.
+    </p>
+  </div>
+
+  <p>
+    The lesson generalises well beyond this toy. The thing that defeated the
+    original wasn't a security control someone added to stop the attack — it was a
+    performance optimisation, put there for entirely unrelated reasons, quietly
+    erasing the exact signal the attack relied on. A lot of security work is
+    exactly this: the behaviour that matters is not in the algorithm's
+    description, it's in what the silicon actually does when you run it.
+  </p>
+
+  <!-- ============================================================ -->
+  <h2 id="part5">Part 5 — The fix, and why the pointer chase beats the prefetcher</h2>
+
+  <p>
+    Now the pointer chase from Part 3 makes sense. The prefetcher can only run
+    ahead when it can <em>predict</em> the next address. With a linear stride the
+    next address is trivially "current + 64". With a pointer chase, the next
+    address is whatever value the current slot happens to hold — and because the
+    slots were shuffled into a random cycle, that address is effectively
+    unpredictable. The prefetcher has nothing to run ahead on. Each read must
+    complete before the next address is even known, so the CPU genuinely stalls on
+    every miss, and the true latency finally appears in the timing.
+  </p>
+
+  <p>
+    Swap the linear walk for the dependent-load chain and the flat line becomes a
+    textbook staircase: about 1.6 ns while the working set fits in the fast caches,
+    rising through the intermediate levels, up to 104.5 ns once it no longer fits
+    anywhere but DRAM — the blue curve above. Same machine, same coarse clock, same
+    everything, except now we're measuring capacity instead of bandwidth. One line
+    of code — <em>where the next address comes from</em> — is the whole
+    difference.
+  </p>
+
+  <div class="keyidea">
+    <p>
+      <strong>Aside — but doesn't the browser blunt the clock on purpose?</strong>
+      Yes. Browsers coarsen <code>performance.now()</code> (to 100 µs in Chrome
+      outside a special isolated context, 1 ms in Firefox/Safari) specifically to
+      frustrate timing attacks. It doesn't obstruct <em>this</em> measurement,
+      because coarsening defeats timing a <em>single</em> access — and we never do
+      that. We time a loop that runs for milliseconds and divide, so a 100 µs
+      quantum is a rounding error. The defence I expected to be the obstacle wasn't
+      the obstacle; a performance feature was. Worth being precise rather than
+      dramatic about that.
+    </p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="part6">Part 6 — Reality check: does it match the real hardware?</h2>
+
+  <p>
+    A pretty staircase is one thing; a staircase that lands on the actual numbers
+    is another. So the measured curve was checked against a published cache
+    hierarchy — and it holds up well enough to be worth walking through, including
+    where it doesn't.
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>Provenance, stated plainly.</strong> The latency curve in this article
+      is now <strong>measured on my own hardware</strong> — a fine-grained sweep run
+      in Chrome 153, a non-isolated context, on a 6-core / 8 GB Apple Silicon machine.
+      (Chrome's user-agent string still says "Intel Mac OS X"; that is the
+      <em>frozen</em> UA Chrome reports on Apple Silicon, not a real Intel Mac —
+      worth knowing so you don't misread it.) The figures I compare it against are
+      the <strong>published specifications for Apple's A18 Pro</strong> (cited below),
+      so this section is "my measured curve versus the published hierarchy." Where
+      they agree I say <em>measured, confirmed</em>; where the sweep can't see
+      something I say so.
+    </p>
+  </div>
+
+  <p>
+    <strong>The L1 boundary lands exactly.</strong> The A18 Pro's performance core
+    is published with a <strong>128 KB L1 data cache</strong>. My curve is flat at
+    about 1.5–1.9 ns/access through the 32, 64 and 128 KB windows, then jumps 2.6× —
+    1.6 ns to 4.2 ns — at 192 KB. That is precisely the fingerprint of a 128 KB
+    cache: the working set still fits at 128 KB and stops fitting just past it. The
+    measurement pins the published L1d capacity exactly, from my own machine.
+  </p>
+
+  <p>
+    <strong>It recovers latency too — with an honest correction.</strong> The flat
+    L1 reading is about <strong>1.5–1.6 ns/access</strong>. At the A18 Pro's
+    published 4.04 GHz P-core clock that is roughly <strong>6 cycles</strong> — a few
+    cycles <em>above</em> the ~3–4-cycle L1 load-to-use latency documented for
+    Apple's performance cores (via the closely related Firestorm design). The gap is
+    not a mystery and it is worth being straight about: each "access" here is a
+    bounds-checked JavaScript array index plus loop overhead riding on top of the
+    real hardware load, so the method reads a few cycles high. It recovers the
+    cache's <em>capacity</em> on the nose and its <em>latency</em> to the right order
+    — a handful of cycles — but the absolute cycle count carries a constant software
+    tax. (An earlier draft, from a different environment, quoted 1.05 ns ≈ 4.2
+    cycles; my own run is slower and this is the corrected figure. Trust the
+    measurement over the tidier number.)
+  </p>
+
+  <p>
+    <strong>Past L1 it degrades honestly — and the finer sweep sees more than the
+    old one did:</strong>
+  </p>
+  <ul>
+    <li>The <strong>L2 cache (published 16 MB)</strong> resolves approximately: a plateau near 5.4–5.9 ns holds from ~384 KB to ~2 MB, then a gentle shoulder climbs to 11.75 ns by 16 MB, where the working set starts leaving L2 (the 16 MB → 24 MB step rises 1.64×).</li>
+    <li>The <strong>system-level cache (~24 MB)</strong> — which the old coarse power-of-two sweep <em>missed entirely</em> — now shows up. Because this fine sweep has a sample at 24 MB, it catches an intermediate tier at <strong>~19 ns</strong> sitting between the L2 edge (~12 ns at 16 MB) and full DRAM (39 ns at 32 MB). That is exactly where a ~24 MB SLC should appear. It is a shoulder on a climb rather than a clean plateau, and the SLC size is the least-certain published figure (The Apple Wiki flags it), so I'd call it <em>plausibly resolved</em> — but it went from invisible to visible purely by sampling finer.</li>
+    <li><strong>DRAM</strong> resolves: latency climbs past the caches to 39 ns at 32 MB and on to <strong>104.5 ns at 128 MB</strong> — a thoroughly believable main-memory latency. (The transition is gradual — no single step clears the 1.4× bar past 32 MB — so it registers as a slope, not a discrete knee.)</li>
+  </ul>
+
+  <h3>The detector, and the boundaries it does and doesn't name</h3>
+  <p>
+    Run the fixed knee detector on this curve and it confidently reports two
+    boundaries: <strong>128 KB and 24 MB</strong>. Its <em>raw</em> (pre-merge) list
+    is three — 128 KB, 16 MB, 24 MB — and here is the subtlety worth the whole
+    section. The merge rule exists because on the earlier coarse sweep the detector
+    invented a phantom cache at <strong>8 MB</strong>: no such cache exists; it was
+    the L2 rolloff shoulder compounded by the <strong>TLB</strong> (the small
+    address-translation table) running out — roughly 160 entries over 16 KB pages
+    reach only ~2.5 MB before translation misses add their own latency. Merging
+    consecutive above-threshold steps correctly kills that ghost.
+  </p>
+  <div class="keyidea">
+    <p>
+      But look what the same merge does here. On this finer data the two steps it
+      collapses — 16 MB (leaving L2) and 24 MB (leaving the SLC) — are
+      <em>both real, and different levels</em>. The rule tuned to stop the tool
+      <em>inventing</em> a boundary now makes it <em>hide</em> one. That is the
+      prefetcher plot twist a third time: in Part 4 the instrument hid a real
+      boundary, earlier in this part it invented a fake one, and here a well-meaning
+      fix does both at once — merging a genuine L2 edge into the SLC edge. The tool
+      lies in every direction, and only knowing the hardware lets you read past it.
+      The raw list (128 KB / 16 MB / 24 MB) is actually the more faithful map of
+      this chip; the merged headline (128 KB / 24 MB) is the safer default. Both are
+      shown on the page on purpose.
+    </p>
+  </div>
+
+  <table>
+    <tr><th>Published spec (A18 Pro)</th><th>Measured on the author's hardware</th><th>Verdict</th></tr>
+    <tr><td>L1d — 128 KB</td><td>flat ≤ 128 KB, 2.6× jump (1.6→4.2 ns) at 192 KB</td><td>pinned exactly</td></tr>
+    <tr><td>L1 load-to-use — ~3–4 cycles</td><td>~1.5–1.6 ns ≈ ~6 cycles @ 4.04 GHz</td><td>right order; reads a few cycles high (JS overhead)</td></tr>
+    <tr><td>L2 — 16 MB</td><td>~5.4–5.9 ns plateau to ~2 MB; leaves L2 by 16 MB (11.75 ns)</td><td>resolves approximately</td></tr>
+    <tr><td>SLC — ~24 MB <em>(uncertain)</em></td><td>intermediate ~19 ns tier at 24 MB, between L2 and DRAM</td><td>now plausibly resolved (fine sweep only)</td></tr>
+    <tr><td>DRAM</td><td>39 ns @ 32 MB → 104.5 ns @ 128 MB</td><td>confirmed</td></tr>
+    <tr><td><em>(none — 8 MB)</em></td><td>old coarse sweep's false knee</td><td>corrected: TLB/rolloff, not a cache</td></tr>
+  </table>
+  <p style="color:var(--muted);font-size:13px">
+    Dynamic range of the measured curve: ~70× (1.5 ns to 104.5 ns). Every
+    "published spec" figure is a specification (cited below); every "measured" figure
+    is from the author's own sweep of this chip.
+  </p>
+
+  <!-- ============================================================ -->
+  <h2 id="part7">Part 7 — The finale: turning the clock into a covert channel</h2>
+
+  <p>
+    So far the timing primitive only reads a harmless fact about my own hardware.
+    The finale on the cache page puts it to work: it lets two separate programs on
+    the same machine <strong>talk to each other</strong> using nothing but the
+    shared cache — no shared variables, no network, no files, no messages passed
+    between them. Just contention for the same silicon.
+  </p>
+
+  <p>
+    The setup is two contexts: a <em>sender</em> running in a Web Worker (a
+    separate thread) and a <em>receiver</em> running on the main page. The trick is
+    that they share the last-level cache and the memory bus, because on a real chip
+    those are physically shared across cores.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 720 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Schematic of the covert channel. A sender worker either hammers or rests a memory region; the shared cache in the middle is contended or free; the receiver times its own probe and decodes ones and zeros.">
+      <text x="360" y="26" text-anchor="middle" style="font:600 13px sans-serif;fill:var(--text)">A covert channel through the shared cache</text>
+      <!-- sender -->
+      <rect x="30" y="60" width="180" height="150" rx="10" style="fill:var(--panel);stroke:var(--line);stroke-width:1.5"/>
+      <text x="120" y="84" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">SENDER (Worker)</text>
+      <text x="120" y="112" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">to send a 1:</text>
+      <text x="120" y="130" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--err)">hammer 24 MB hard</text>
+      <text x="120" y="158" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">to send a 0:</text>
+      <text x="120" y="176" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--ok)">stay quiet</text>
+      <!-- shared cache -->
+      <rect x="285" y="80" width="150" height="110" rx="10" style="fill:var(--bg);stroke:var(--accent);stroke-width:2"/>
+      <text x="360" y="120" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--accent)">SHARED CACHE</text>
+      <text x="360" y="140" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--accent)">+ memory bus</text>
+      <text x="360" y="164" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">physically shared</text>
+      <!-- receiver -->
+      <rect x="510" y="60" width="180" height="150" rx="10" style="fill:var(--panel);stroke:var(--line);stroke-width:1.5"/>
+      <text x="600" y="84" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">RECEIVER (page)</text>
+      <text x="600" y="112" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">times its OWN probe:</text>
+      <text x="600" y="134" text-anchor="middle" style="font:11px sans-serif;fill:var(--text)">slow probe (~90 ns)</text>
+      <text x="600" y="150" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--err)">→ reads a 1</text>
+      <text x="600" y="172" text-anchor="middle" style="font:11px sans-serif;fill:var(--text)">fast probe (~9 ns)</text>
+      <text x="600" y="188" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--ok)">→ reads a 0</text>
+      <!-- arrows -->
+      <line x1="210" y1="135" x2="283" y2="135" style="stroke:var(--muted);stroke-width:2" marker-end="url(#ah)"/>
+      <line x1="437" y1="135" x2="508" y2="135" style="stroke:var(--muted);stroke-width:2" marker-end="url(#ah)"/>
+      <text x="247" y="126" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">evicts</text>
+      <text x="472" y="126" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">slows</text>
+      <defs>
+        <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" style="fill:var(--muted)"/>
+        </marker>
+      </defs>
+      <text x="360" y="248" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">No shared memory. No network. No storage. The only thing crossing the gap is contention for the cache.</text>
+      <text x="360" y="270" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">The receiver never sees the sender — it only notices that its own reads got slower.</text>
+    </svg>
+    <figcaption>The sender writes bits by making the receiver's memory slow or fast; the receiver reads them off its own stopwatch.</figcaption>
+  </figure>
+
+  <p>
+    On the wire a <code>1</code> is the sender saturating a big memory region for a
+    time slot; a <code>0</code> is the sender resting. The saturation evicts the
+    receiver's data from the shared cache, so when the receiver runs the very same
+    pointer-chase probe from Part 3, it comes back slow. Quiet sender → fast probe
+    → the receiver reads a <code>0</code>. The sender's loop is deliberately tight
+    and non-yielding, because a bursty sender produces almost no signal:
+  </p>
+
+  <p class="filetag">src/cache/channel.js — the sender, running in a Worker</p>
+  <pre class="code"><code><span class="cm">// A '1' chip: saturate the memory subsystem continuously for ~a few ms.</span>
+function thrash(ms){
+  const step = 64; let acc = 0; const t0 = performance.now();
+  while (performance.now() - t0 &lt; ms){
+    <b>for (let i=0;i&lt;buf.length;i+=step) acc ^= buf[i];</b>  <span class="cm">// stream a big region, over and over</span>
+  }
+  return acc;
+}</code></pre>
+
+  <p class="filetag">src/cache/channel.js — the receiver's probe (a dependent-load chain, as before)</p>
+  <pre class="code"><code>return function probeNs(steps) {
+  let p = 0;
+  const t0 = performance.now();
+  for (let i = 0; i &lt; steps; i++) <b>p = buf[p];</b>  <span class="cm">// same pointer chase — its speed reveals whether we were evicted</span>
+  const t1 = performance.now();
+  return ((t1 - t0) * 1e6) / steps;
+};</code></pre>
+
+  <p>
+    Raw, the contrast is not subtle. In the feasibility measurements the
+    receiver's probe read about <strong>8.7 ns/access</strong> with the sender
+    idle and <strong>90.3 ns/access</strong> with the sender thrashing — roughly a
+    <strong>10× swing</strong>, trivially visible even through the coarse 100 µs
+    clock. The simulator that drives the reliable "replay" demo is calibrated
+    straight to those figures:
+  </p>
+
+  <p class="filetag">src/cache/channel-sim.js — the model, straight from the measured hardware</p>
+  <pre class="code"><code>export const MODEL = {
+  <b>idleNs: 9,</b>   <span class="cm">// receiver probe when the sender is quiet (region still resident)</span>
+  <b>busyNs: 90,</b>  <span class="cm">// receiver probe when the sender saturates the cache/bus</span>
+};</code></pre>
+
+  <h3>Why the signal is easy but the message is hard</h3>
+
+  <p>
+    Here's the surprise, and it's the intellectual centre of the finale:
+    <em>detecting</em> the sender is easy, but turning that into a reliable stream
+    of bits is genuinely hard — and the hard part is not the signal, it's the
+    <strong>synchronisation</strong>. The two ends have to agree on where each bit
+    slot begins and ends. My first attempts used simple fixed time slots against a
+    shared wall clock, and they decoded at a bit-error rate around 0.5 — no better
+    than flipping a coin — despite a clear 6–9× separation sitting right there in
+    the raw samples. The signal was present; the <em>clocking</em> was broken.
+  </p>
+
+  <p>
+    The reason is subtle and worth savouring: the receiver's own probe takes about
+    ten times longer when the region is evicted (during a <code>1</code>) than when
+    it's resident (during a <code>0</code>). So the receiver's measurement runs
+    slow during exactly the bits that are <code>1</code>, its probe overruns the
+    slot, and the two ends drift apart within a few bits. The very thing being
+    measured distorts the measurement's timing.
+  </p>
+
+  <p>
+    The textbook fix is <strong>Manchester coding</strong>, self-clocking by
+    design. Instead of "high = 1, low = 0", every bit is sent as a
+    <em>transition</em> within its slot: a <code>1</code> is occupy-then-idle, a
+    <code>0</code> is idle-then-occupy. Because every single bit contains an edge,
+    the receiver recovers the clock from the signal itself and re-locks on every
+    bit, so drift can't accumulate:
+  </p>
+
+  <p class="filetag">src/cache/manchester.js — every bit carries its own clock edge</p>
+  <pre class="code"><code>export const CHIPS_FOR_1 = [1, 0];   <span class="cm">// data 1 → occupy, then idle</span>
+export const CHIPS_FOR_0 = [0, 1];   <span class="cm">// data 0 → idle, then occupy</span>
+
+export function manchesterEncode(bits) {
+  const chips = [];
+  for (const b of bits) <b>chips.push(...(b ? CHIPS_FOR_1 : CHIPS_FOR_0));</b>
+  return chips;
+}</code></pre>
+
+  <figure>
+    <svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Manchester encoding. Each data bit becomes two half-slot chips with a guaranteed transition in the middle: a one is high then low, a zero is low then high.">
+      <text x="360" y="24" text-anchor="middle" style="font:600 13px sans-serif;fill:var(--text)">Manchester coding: the clock rides inside the data</text>
+      <!-- baseline -->
+      <line x1="60" y1="150" x2="680" y2="150" style="stroke:var(--line);stroke-width:1"/>
+      <text x="40" y="90" text-anchor="end" style="font:10px sans-serif;fill:var(--muted)">occupy</text>
+      <text x="40" y="154" text-anchor="end" style="font:10px sans-serif;fill:var(--muted)">idle</text>
+      <!-- bit sequence 1 0 1 1  each bit 140px wide, two chips of 70 -->
+      <!-- bit=1 -> [1,0] high then low ; bit=0 -> [0,1] low then high -->
+      <!-- b1=1 x60..200 -->
+      <polyline points="60,80 130,80 130,150 200,150" style="fill:none;stroke:var(--accent);stroke-width:2.5"/>
+      <text x="130" y="176" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--text)">1</text>
+      <!-- b2=0 x200..340 -->
+      <polyline points="200,150 270,150 270,80 340,80" style="fill:none;stroke:var(--accent);stroke-width:2.5"/>
+      <text x="270" y="176" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--text)">0</text>
+      <!-- b3=1 x340..480 -->
+      <polyline points="340,80 410,80 410,150 480,150" style="fill:none;stroke:var(--accent);stroke-width:2.5"/>
+      <text x="410" y="176" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--text)">1</text>
+      <!-- b4=1 x480..620 -->
+      <polyline points="480,80 550,80 550,150 620,150" style="fill:none;stroke:var(--accent);stroke-width:2.5"/>
+      <text x="550" y="176" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--text)">1</text>
+      <!-- slot dividers -->
+      <line x1="200" y1="60" x2="200" y2="160" style="stroke:var(--line);stroke-width:0.7;stroke-dasharray:2 2"/>
+      <line x1="340" y1="60" x2="340" y2="160" style="stroke:var(--line);stroke-width:0.7;stroke-dasharray:2 2"/>
+      <line x1="480" y1="60" x2="480" y2="160" style="stroke:var(--line);stroke-width:0.7;stroke-dasharray:2 2"/>
+      <!-- mid-slot edge markers -->
+      <circle cx="130" cy="115" r="3" style="fill:var(--err)"/>
+      <circle cx="270" cy="115" r="3" style="fill:var(--err)"/>
+      <circle cx="410" cy="115" r="3" style="fill:var(--err)"/>
+      <circle cx="550" cy="115" r="3" style="fill:var(--err)"/>
+      <text x="640" y="119" style="font:10px sans-serif;fill:var(--err)">← edge</text>
+      <text x="640" y="133" style="font:10px sans-serif;fill:var(--err)">every bit</text>
+    </svg>
+    <figcaption>The guaranteed mid-slot transition (red) is the clock. Even if the two ends drift, the receiver finds every edge and re-aligns, which is what fixed slots couldn't do.</figcaption>
+  </figure>
+
+  <p>
+    A short <em>preamble</em> of raw alternating chips leads each message, so the
+    receiver can lock its phase and calibrate its fast/slow threshold from the real
+    channel before the payload begins. There's an optional repetition-3
+    error-correcting code (send each bit three times, take the majority) so the
+    page can show raw versus corrected side by side — the errors are displayed, not
+    hidden. All of that codec logic is pure and deterministic, which means it's
+    unit-tested against synthetic traces without needing flaky real hardware in the
+    loop. The realistic reliable bitrate for this coarse-timed channel is modest —
+    single digits to low tens of bits per second — which is completely fine: "a few
+    bytes per second, through nothing but the cache" is the striking part, not the
+    speed.
+  </p>
+
+  <h3>It works live — confirmed on real hardware</h3>
+  <p>
+    That bitrate estimate is no longer just a projection. The live channel was run
+    end-to-end on the author's own machine and it <strong>decoded</strong>. With the
+    sender hammering and the receiver timing its own probe — no shared memory, no
+    network, no storage — the message <code>cache</code> arrived <strong>intact</strong>:
+    raw bitrate <strong>12.5 bits/s</strong>, and with the error-correcting code
+    switched <em>off</em>, a post-decode <strong>bit-error rate of 0.0%</strong> and a
+    passing checksum. A handful of individual chips did flip — visible as red points
+    early in the latency trace — but the preamble's threshold calibration and
+    Manchester's self-clocking recovered the framing, so the whole word still came
+    through. That is the entire pipeline from the top of this page, carrying real
+    bits through nothing but contention for the cache.
+  </p>
+  <p>
+    The honest caveats stay exactly as they were: this is <strong>best-effort</strong>.
+    It depends on the machine and its background load, the bitrate is deliberately
+    low, and on a busy laptop a live run may not land clean bits at all — which is
+    why the page still ships the deterministic replay as the always-works fallback.
+    What changed is only that "live decode is unverified" has become "live decode is
+    verified, on this hardware, under these conditions." Confirmed real, not just
+    simulated.
+  </p>
+
+  <div class="keyidea">
+    <p>
+      <strong>A one-bit ghost: the day it decoded "cacHe".</strong> On a different
+      live run the same message came back as <code>cacHe</code> — a capital H in the
+      middle of an otherwise perfect word. That is not a glitch in the demo; it is
+      the channel telling the truth about itself. Lowercase <code>h</code> is
+      <code>0x68</code> = <code>0110&nbsp;1000</code>; uppercase <code>H</code> is
+      <code>0x48</code> = <code>0100&nbsp;1000</code>. They differ by exactly
+      <strong>one bit</strong> — <code>0x20</code>, the ASCII "case" bit. So a single
+      chip flipped by cache noise silently changed one letter's case and left every
+      other bit untouched. It is hard to imagine a cleaner illustration of two things
+      at once: (a) the channel really is carrying real bits subject to real physical
+      noise, and (b) exactly why error-correcting codes and a whole-message checksum
+      belong in any serious design — one flipped bit is the whole distance between
+      <code>cache</code> and <code>cacHe</code>, and only the FEC or the checksum
+      would catch it.
+    </p>
+  </div>
+
+  <h3>The defence — a dial, not a switch</h3>
+
+  <p>
+    The obvious question is: how do you stop this? A common intuition is that
+    <strong>site isolation</strong> — the browser putting different origins in
+    different operating-system processes — should close it. It doesn't, and saying
+    so honestly is a better lesson than repeating the myth. Site isolation defends
+    against a different attack: one origin's code speculatively reading another
+    origin's memory <em>inside the same process</em>, which is the Spectre family.
+    But a cache covert channel doesn't read anyone's memory. It works through
+    contention, and the last-level cache and memory bus are <strong>physically
+    shared across cores and processes</strong>. Two separate processes still fight
+    over the same silicon, so this channel <em>survives</em> process and site
+    isolation.
+  </p>
+
+  <p>
+    What actually helps are measures that degrade the channel's <em>capacity</em>:
+    coarsening the timer, withholding the high-resolution <code>SharedArrayBuffer</code>
+    counter unless a page is cross-origin isolated, and throttling background
+    threads. On the demo you can toggle timer coarsening and drag a quality slider
+    and watch the bit-error rate climb and the Shannon capacity fall. But none of
+    them drives it cleanly to zero without also making legitimate timing useless,
+    because — the honest bottom line — <strong>you cannot un-share a cache in
+    software.</strong> The mitigations raise the attacker's cost and lower the
+    bandwidth. They are mitigations, not fixes. That "reduced, not eliminated"
+    reality is the more interesting security truth, and it's the note the finale
+    ends on.
+  </p>
+
+  <!-- ============================================================ -->
+  <h2 id="part8">Part 8 — Replicate it yourself</h2>
+
+  <p>
+    Everything above is in this repository, and it's built to be run. There's no
+    framework, no install step for the demos themselves, and every page is a single
+    self-contained file.
+  </p>
+
+  <h3>What's in the repo</h3>
+  <ul>
+    <li><code>src/cache/chase.js</code> — the corrected pointer-chase measurement (the blue curve).</li>
+    <li><code>src/cache/linear.js</code> — the faithful 2020 linear-stride pass (the flat red curve), kept so you can see it fail.</li>
+    <li><code>src/cache/detect.js</code> — turns a curve into cache boundaries, and refuses to when there's no real range.</li>
+    <li><code>src/cache/manchester.js</code> — the self-clocking codec: bytes → bits → chips and back, with preamble, framing and checksum.</li>
+    <li><code>src/cache/channel.js</code> — the live physical channel: the Worker sender and the constant-work receiver probe.</li>
+    <li><code>src/cache/channel-sim.js</code> — the deterministic simulator that powers the always-works replay demo and the defence sliders.</li>
+    <li><code>data/cache/fixtures.json</code> — the captured latency curve the live page plots in "captured run" mode. (Part 6's numbers above are from a finer sweep on the author's own machine; the demo's captured curve is an earlier validation run.)</li>
+    <li><code>BUGS.md</code> — every defect found while porting, marked FIXED / GUARDED / OPEN / N/A. Defect #1 is the prefetcher story.</li>
+  </ul>
+
+  <h3>How to run it</h3>
+  <p>
+    You need <a href="https://nodejs.org/">Node.js</a> (v18 or newer) only to build
+    the pages and run the tests; the built pages themselves need nothing. From the
+    <code>portfolio/</code> folder:
+  </p>
+  <pre class="code"><code>npm run verify   <span class="cm"># runs the unit tests, then rebuilds dist/ and runs the post-build checks</span>
+npm run build    <span class="cm"># just rebuild the self-contained pages into dist/</span></code></pre>
+  <p>
+    Then open <code>dist/cache.html</code> in a browser — double-click it, no server
+    needed. Choose <strong>“Pointer chase — live on this machine”</strong> and hit
+    Run to measure <em>your</em> hierarchy; switch to <strong>“2020 algorithm —
+    live”</strong> to watch the same clock report a flat line on the same machine.
+    Scroll to the finale to send a short message through the cache and play with the
+    defence dial. (This explainer is <code>dist/article.html</code>, reachable from
+    the top nav.)
+  </p>
+
+  <h3>Two experiments worth trying</h3>
+  <ul>
+    <li>
+      <strong>Watch the prefetcher win.</strong> Run the pointer-chase mode and note
+      the staircase. Now run the 2020 linear mode over the same size range: the knees
+      vanish and the line goes flat. That gap is the prefetcher hiding every miss —
+      the whole plot twist, reproduced in two clicks. If you're comfortable editing
+      the code, change the pointer chase in <code>chase.js</code> back to a linear
+      stride and watch the curve collapse; that's the experiment that started this.
+    </li>
+    <li>
+      <strong>Watch the error rate climb.</strong> In the finale, tick “coarsen the
+      receiver's timer” and drag the channel-quality slider down. The bit-error rate
+      rises and the capacity readout falls — a live demonstration of what a
+      countermeasure actually buys, and of the fact that it degrades the channel
+      without ever quite closing it.
+    </li>
+  </ul>
+
+  <!-- ============================================================ -->
+  <h2 id="refs">Where to go deeper</h2>
+
+  <p>
+    These are the reputable, mostly beginner-approachable sources behind the
+    concepts here, if you want to keep pulling the thread:
+  </p>
+  <ul>
+    <li><strong>Caches and the memory-speed gap:</strong> Ulrich Drepper, <em>What Every Programmer Should Know About Memory</em> (2007) — the canonical deep-dive on why caches exist and how they behave. <a href="https://www.akkadia.org/drepper/cpumemory.pdf">akkadia.org/drepper/cpumemory.pdf</a>. A gentler start is Wikipedia's <a href="https://en.wikipedia.org/wiki/CPU_cache">CPU cache</a> article.</li>
+    <li><strong>Prefetching</strong> (the Part 4 villain): Wikipedia, <a href="https://en.wikipedia.org/wiki/Cache_prefetching">Cache prefetching</a>, plus the prefetching sections of Drepper above.</li>
+    <li><strong>The A18 Pro hardware figures</strong> (the Part 6 published specs): <a href="https://theapplewiki.com/wiki/A18_Pro">The Apple Wiki — A18 Pro</a> for cache sizes (L1d 128 KB, L2 16 MB per P-core; the ~24 MB system-level cache is flagged uncertain) and clock. Apple P-core L1 load-to-use latency is documented for the closely related Firestorm core at <a href="https://www.7-cpu.com/cpu/Apple_M1.html">7-CPU — Apple M1</a> (3–4 cycles). General background: <a href="https://en.wikipedia.org/wiki/Apple_A18">Wikipedia — Apple A18</a>.</li>
+    <li><strong>Cache timing as an attack primitive:</strong> Colin Percival, <em>Cache Missing for Fun and Profit</em> (2005) — very readable, and the paper that popularised cache covert channels between threads. <a href="https://www.daemonology.net/papers/htt.pdf">daemonology.net/papers/htt.pdf</a>. The classic Prime+Probe treatment is Osvik, Shamir &amp; Tromer, <em>Cache Attacks and Countermeasures: the Case of AES</em> (2006), <a href="https://eprint.iacr.org/2005/271">eprint.iacr.org/2005/271</a>.</li>
+    <li><strong>Cache attacks in the browser</strong> (closest to this demo): Oren et al., <em>The Spy in the Sandbox — Practical Cache Attacks in JavaScript</em> (2015), <a href="https://arxiv.org/abs/1502.07373">arxiv.org/abs/1502.07373</a>.</li>
+    <li><strong>Spectre</strong> (why the timer defences exist): Kocher et al., <em>Spectre Attacks</em> (2019), <a href="https://spectreattack.com/spectre.pdf">spectreattack.com/spectre.pdf</a>.</li>
+    <li><strong>Covert &amp; side channels, background:</strong> Wikipedia, <a href="https://en.wikipedia.org/wiki/Covert_channel">Covert channel</a> and <a href="https://en.wikipedia.org/wiki/Side-channel_attack">Side-channel attack</a>.</li>
+    <li><strong>The browser's timing defences:</strong> MDN on <a href="https://developer.mozilla.org/en-US/docs/Web/API/Performance/now">performance.now()</a> and <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer">SharedArrayBuffer</a> (and the COOP/COEP isolation it needs).</li>
+  </ul>
+
+  <div class="keyidea">
+    <p>
+      <strong>One more time, because it matters:</strong> this is cooperative and
+      educational. It leaks no one's data, it measures only my own machine, the
+      techniques are decades old and well documented above, and there is no
+      vulnerability here to report. The point was never to break something — it was
+      to understand what the machine is really doing, closely enough to tell the
+      difference between what a program claims to measure and what it actually
+      measures. That difference is where the interesting security questions live.
+    </p>
+  </div>
+</div>
+
+<footer class="site">
+    A cooperative cache-timing covert channel &middot; cache side-channel measurement, weaponised and defended.
+    Educational security research &mdash; no victim, no secret, no network. Every page is a single file you can save and run offline.
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "cache-covert-channel",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "description": "A cooperative CPU-cache covert channel in the browser: measure the cache hierarchy from a timer, weaponise the timing into a channel, then defend it. No dependencies, no server, no network.",
+  "keywords": [
+    "covert-channel",
+    "side-channel",
+    "cache-timing",
+    "prime-probe",
+    "manchester-coding",
+    "security",
+    "microarchitecture"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test \"test/*.test.js\"",
+    "start": "node scripts/build.mjs && echo 'Open dist/cache.html in your browser'"
+  },
+  "engines": { "node": ">=18" }
+}
