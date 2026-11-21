@@ -140,3 +140,32 @@ export async function transmitLive(chips, params = {}) {
     URL.revokeObjectURL(url);
   }
 }
+
+// Pre-flight: transmit a short raw alternating 1,0,1,0… pattern and measure the
+// hi/lo separation the receiver sees, WITHOUT committing to a full multi-second
+// frame. A dead channel (both ends on one core, machine busy) shows ~1× here and
+// can be rejected in ~1s, instead of after a 16s transmit. Same hi/lo convention
+// as manchester.calibrate(): even chip index = 1 (high/occupied), odd = 0 (low).
+export async function probeChannel(params = {}) {
+  const {
+    chipMs = 40,
+    probeSteps = 60000,
+    regionBytes = 8 * 1024 * 1024,
+    bufMB = 24,
+    pairs = 8, // 16 chips ≈ 0.6s of transmit + lead
+  } = params;
+
+  if (!liveSupported()) throw new Error('live channel unsupported in this context');
+
+  const chips = [];
+  for (let i = 0; i < pairs; i++) chips.push(1, 0);
+
+  const { samples } = await transmitLive(chips, { chipMs, probeSteps, regionBytes, bufMB });
+
+  const highs = [], lows = [];
+  for (let i = 0; i < samples.length; i++) (i % 2 === 0 ? highs : lows).push(samples[i]);
+  const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  const high = mean(highs), low = mean(lows);
+  const separation = low > 0 ? high / low : 0;
+  return { separation, high, low, samples };
+}

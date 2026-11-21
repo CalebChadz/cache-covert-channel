@@ -257,6 +257,18 @@ export function initChannel() {
     const MAX_ATTEMPTS = 2;
     let best = null, bestBer = Infinity;
     try {
+      // Pre-flight: a ~1s preamble-only probe to see if there's a usable channel
+      // right now, so a dead channel falls back fast instead of after a full
+      // multi-second frame.
+      setStatus('Live: checking the channel — short pre-flight probe…');
+      const pre = await probeChannel({ chipMs: CHIP_MS });
+      if (pre.separation < 2.0) {
+        els.liveNote.style.display = '';
+        runReplay(`Live channel too weak right now (${pre.separation.toFixed(1)}× pre-flight separation — usually core scheduling) —`);
+        return;
+      }
+      setStatus(`Live: channel looks good (${pre.separation.toFixed(1)}× separation) — transmitting…`);
+
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         setStatus(`Live: attempt ${attempt} of ${MAX_ATTEMPTS} — transmitting through real cache contention on this machine…`);
         const { samples } = await transmitLive(chips, { chipMs: CHIP_MS });
