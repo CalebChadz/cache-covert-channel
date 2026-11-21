@@ -113,6 +113,15 @@ button.primary:hover:not(:disabled) { box-shadow: 0 0 16px rgba(34,211,238,0.45)
 .chartBox b { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 700; }
 .chartBox canvas { width: 100%; display: block; }
 
+/* live vs simulated provenance badge */
+.srcbadge {
+  display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; padding: 5px 12px; border-radius: 20px;
+  border: 1px solid var(--line); background: var(--panel); margin-bottom: 2px;
+}
+.srcbadge.live { color: var(--ok); border-color: var(--ok); box-shadow: 0 0 12px rgba(55,243,154,0.3); }
+.srcbadge.sim { color: var(--warn); border-color: var(--warn); }
+
 .status { font-size: 13px; color: var(--muted); min-height: 20px; }
 .status::before { content: "> "; color: var(--accent); }
 .status.ok { color: var(--ok); } .status.ok::before { color: var(--ok); }
@@ -464,6 +473,7 @@ footer.site code { background: var(--panel-2); }
       <div class="stat"><b id="chCapacity">–</b><span>Capacity</span></div>
       <div class="stat"><b id="chChecksum">–</b><span>Checksum</span></div>
     </div>
+    <div id="chSource" class="srcbadge sim">● SIMULATED — modelled trace</div>
     <div class="status" id="chStatus">Ready.</div>
 
     <div class="ch-panes">
@@ -1813,6 +1823,13 @@ const SENDER_WORKER_SRC = `
   self.onmessage = (e) => {
     const { chips, chipMs, startAt, bufMB } = e.data;
     ensureBuf(bufMB || 24);
+    // Warm-up thrash before the aligned frame: nudges the scheduler to place
+    // this worker on its own (performance) core and ramps the clock, so the
+    // first chips already see full contention instead of a cold start - the
+    // single biggest cause of a flat, undecodable first run.
+    { const t0 = performance.now(); let a = 0;
+      while (performance.now() - t0 < 25) { for (let i = 0; i < buf.length; i += 64) a ^= buf[i]; }
+      if (a === 0.5) self.postMessage({ warm: a }); }
     while (Date.now() < startAt) {}   // align to the shared start instant
     let acc = 0;
     for (let k=0;k<chips.length;k++){
@@ -1878,7 +1895,7 @@ async function transmitLive(chips, params = {}) {
   const worker = new Worker(url);
 
   try {
-    const startAt = Date.now() + 200; // lead time for both ends to be ready
+    const startAt = Date.now() + 320; // lead for alloc + sender warm-up + both ends ready
     worker.postMessage({ chips, chipMs, startAt, bufMB });
 
     while (Date.now() < startAt) { /* spin to the shared start */ }
@@ -2011,7 +2028,23 @@ function initChannel() {
     statBitrate: $('chBitrate'), statBer: $('chBer'), statCapacity: $('chCapacity'),
     statChecksum: $('chChecksum'),
     liveNote: $('chLiveNote'),
+    source: $('chSource'),
   };
+
+  // The provenance badge: tells the viewer, unmissably, whether what they are
+  // looking at is a real live transmission on this machine or the simulated
+  // model. Live mode can auto-fall-back to simulated, so this always reflects
+  // the ACTUAL source of the currently-displayed result, not the dropdown.
+  function setBadge(src) {
+    if (!els.source) return;
+    if (src === 'live') {
+      els.source.textContent = '● LIVE — real cache contention on this machine';
+      els.source.className = 'srcbadge live';
+    } else {
+      els.source.textContent = '● SIMULATED — modelled trace (calibrated to measured hardware)';
+      els.source.className = 'srcbadge sim';
+    }
+  }
 
   const CHIP_MS = 40;
   const rawBitrate = 1000 / (CHIP_MS * 2); // Manchester halves the data rate
@@ -2073,12 +2106,21 @@ function initChannel() {
     els.statCapacity.textContent = channelCapacity(ber, rawBitrate).toFixed(1) + ' b/s';
     els.statChecksum.textContent = result.checksumOk ? 'pass' : 'FAIL';
     els.statChecksum.className = 'stat';
+    const live = result.source === 'live';
+    const sep = result.calibration && result.calibration.separation ? result.calibration.separation : null;
+    const pre = result.note ? result.note + ' ' : '';
     if (result.text === truth) {
-      setStatus(`Message received intact over the cache — no shared memory, no network.`, 'ok');
+      setStatus(pre + (live
+        ? 'Live decode clean — real cache contention on this machine, no shared memory or network.'
+        : 'Simulated transmission decoded cleanly — a model calibrated to the measured hardware, identical on every machine.'), 'ok');
     } else if (result.checksumOk) {
-      setStatus(`Decoded with checksum pass but text differs — partial corruption.`, 'warn');
+      setStatus(pre + (live
+        ? 'Live: checksum passed but the text differs — partial corruption this run.'
+        : 'Simulated: checksum passed but the text differs — partial corruption.'), 'warn');
     } else {
-      setStatus(`Corrupted: the receiver could not recover the message cleanly this run.`, 'err');
+      setStatus(pre + (live
+        ? `Live: the receiver couldn't cleanly recover the message this run${sep ? ` (${sep.toFixed(1)}× preamble separation)` : ''} — real channels are noisy. Retry, or switch to Replay.`
+        : 'Simulated: corrupted at this quality / coarsening setting.'), 'err');
     }
   }
 
@@ -2095,7 +2137,7 @@ function initChannel() {
     return { noise, dropContrast, coarsenNs };
   }
 
-  function runReplay() {
+  function runReplay(note) {
     const msg = els.message.value.slice(0, 16) || 'cache';
     const fec = els.fec.checked;
     const { chips } = encodeFrame(msg, { fec });
@@ -2112,41 +2154,68 @@ function initChannel() {
       rawText: rawDec.ok ? rawDec.text : '',
       checksumOk: !!dec.checksumOk,
       calibration: dec.calibration,
+      source: 'sim',
+      note: note || null,
     };
-    setStatus('Transmitting over the (simulated) cache channel…');
+    setBadge('sim');
+    setStatus((note ? note + ' ' : '') + 'Transmitting over the simulated cache channel…');
     present(result, chips);
   }
 
+  // Live transmission, made more consistent in two ways:
+  //   1. the sender warms up and the receiver re-rolls core placement on each
+  //      attempt, so a flat first run gets a second chance automatically;
+  //   2. if the preamble shows no usable contention (a dead channel this run),
+  //      it falls back to the simulated model and SAYS SO, rather than showing
+  //      undecodable noise as if it were a result.
   async function runLive() {
     if (!liveSupported()) {
-      setStatus('This browser cannot host the live channel here — showing replay instead.', 'warn');
-      runReplay();
+      runReplay('Live channel unsupported in this browser —');
       return;
     }
     const msg = els.message.value.slice(0, 16) || 'cache';
     const fec = els.fec.checked;
     const { chips } = encodeFrame(msg, { fec });
-    setStatus('Live: transmitting through real cache contention on this machine… (experimental)');
     els.run.disabled = true;
+    setBadge('live');
+
+    const MAX_ATTEMPTS = 2;
+    let best = null, bestBer = Infinity;
     try {
-      const { samples } = await transmitLive(chips, { chipMs: CHIP_MS });
-      const dec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
-      const rawDec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
-      const result = {
-        samples,
-        text: dec.ok ? dec.text : '',
-        rawText: rawDec.ok ? rawDec.text : '',
-        checksumOk: !!dec.checksumOk,
-        calibration: dec.calibration,
-      };
-      present(result, chips);
-      if (!dec.ok || dec.text !== msg) {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        setStatus(`Live: attempt ${attempt} of ${MAX_ATTEMPTS} — transmitting through real cache contention on this machine…`);
+        const { samples } = await transmitLive(chips, { chipMs: CHIP_MS });
+        const dec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
+        const rawDec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
+        const text = dec.ok ? dec.text : '';
+        const ber = bitErrorRate(msg, text);
+        const cand = {
+          samples, text,
+          rawText: rawDec.ok ? rawDec.text : '',
+          checksumOk: !!dec.checksumOk,
+          calibration: dec.calibration,
+          source: 'live',
+        };
+        if (ber < bestBer) { best = cand; bestBer = ber; }
+        if (cand.checksumOk && text === msg) break; // clean decode — no need to retry
+      }
+
+      const sep = best && best.calibration ? (best.calibration.separation || 0) : 0;
+      const clean = best && best.checksumOk && best.text === msg;
+
+      if (!clean && sep < 2.0) {
+        // No usable contention this run (flat scope, ~coin-flip): the OS likely
+        // kept both ends on one core. Fall back to the model, clearly labelled.
         els.liveNote.style.display = '';
+        runReplay(`Live channel too weak right now (${sep.toFixed(1)}× preamble separation — usually core scheduling) —`);
+      } else {
+        if (!clean) els.liveNote.style.display = '';
+        setBadge('live');
+        present(best, chips);
       }
     } catch (e) {
-      setStatus('Live channel failed (' + e.message + ') — falling back to replay.', 'err');
       els.liveNote.style.display = '';
-      runReplay();
+      runReplay('Live channel failed (' + e.message + ') —');
     } finally {
       els.run.disabled = false;
     }

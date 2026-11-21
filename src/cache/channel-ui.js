@@ -103,7 +103,23 @@ export function initChannel() {
     statBitrate: $('chBitrate'), statBer: $('chBer'), statCapacity: $('chCapacity'),
     statChecksum: $('chChecksum'),
     liveNote: $('chLiveNote'),
+    source: $('chSource'),
   };
+
+  // The provenance badge: tells the viewer, unmissably, whether what they are
+  // looking at is a real live transmission on this machine or the simulated
+  // model. Live mode can auto-fall-back to simulated, so this always reflects
+  // the ACTUAL source of the currently-displayed result, not the dropdown.
+  function setBadge(src) {
+    if (!els.source) return;
+    if (src === 'live') {
+      els.source.textContent = '● LIVE — real cache contention on this machine';
+      els.source.className = 'srcbadge live';
+    } else {
+      els.source.textContent = '● SIMULATED — modelled trace (calibrated to measured hardware)';
+      els.source.className = 'srcbadge sim';
+    }
+  }
 
   const CHIP_MS = 40;
   const rawBitrate = 1000 / (CHIP_MS * 2); // Manchester halves the data rate
@@ -165,12 +181,21 @@ export function initChannel() {
     els.statCapacity.textContent = channelCapacity(ber, rawBitrate).toFixed(1) + ' b/s';
     els.statChecksum.textContent = result.checksumOk ? 'pass' : 'FAIL';
     els.statChecksum.className = 'stat';
+    const live = result.source === 'live';
+    const sep = result.calibration && result.calibration.separation ? result.calibration.separation : null;
+    const pre = result.note ? result.note + ' ' : '';
     if (result.text === truth) {
-      setStatus(`Message received intact over the cache — no shared memory, no network.`, 'ok');
+      setStatus(pre + (live
+        ? 'Live decode clean — real cache contention on this machine, no shared memory or network.'
+        : 'Simulated transmission decoded cleanly — a model calibrated to the measured hardware, identical on every machine.'), 'ok');
     } else if (result.checksumOk) {
-      setStatus(`Decoded with checksum pass but text differs — partial corruption.`, 'warn');
+      setStatus(pre + (live
+        ? 'Live: checksum passed but the text differs — partial corruption this run.'
+        : 'Simulated: checksum passed but the text differs — partial corruption.'), 'warn');
     } else {
-      setStatus(`Corrupted: the receiver could not recover the message cleanly this run.`, 'err');
+      setStatus(pre + (live
+        ? `Live: the receiver couldn't cleanly recover the message this run${sep ? ` (${sep.toFixed(1)}× preamble separation)` : ''} — real channels are noisy. Retry, or switch to Replay.`
+        : 'Simulated: corrupted at this quality / coarsening setting.'), 'err');
     }
   }
 
@@ -187,7 +212,7 @@ export function initChannel() {
     return { noise, dropContrast, coarsenNs };
   }
 
-  function runReplay() {
+  function runReplay(note) {
     const msg = els.message.value.slice(0, 16) || 'cache';
     const fec = els.fec.checked;
     const { chips } = encodeFrame(msg, { fec });
@@ -204,41 +229,68 @@ export function initChannel() {
       rawText: rawDec.ok ? rawDec.text : '',
       checksumOk: !!dec.checksumOk,
       calibration: dec.calibration,
+      source: 'sim',
+      note: note || null,
     };
-    setStatus('Transmitting over the (simulated) cache channel…');
+    setBadge('sim');
+    setStatus((note ? note + ' ' : '') + 'Transmitting over the simulated cache channel…');
     present(result, chips);
   }
 
+  // Live transmission, made more consistent in two ways:
+  //   1. the sender warms up and the receiver re-rolls core placement on each
+  //      attempt, so a flat first run gets a second chance automatically;
+  //   2. if the preamble shows no usable contention (a dead channel this run),
+  //      it falls back to the simulated model and SAYS SO, rather than showing
+  //      undecodable noise as if it were a result.
   async function runLive() {
     if (!liveSupported()) {
-      setStatus('This browser cannot host the live channel here — showing replay instead.', 'warn');
-      runReplay();
+      runReplay('Live channel unsupported in this browser —');
       return;
     }
     const msg = els.message.value.slice(0, 16) || 'cache';
     const fec = els.fec.checked;
     const { chips } = encodeFrame(msg, { fec });
-    setStatus('Live: transmitting through real cache contention on this machine… (experimental)');
     els.run.disabled = true;
+    setBadge('live');
+
+    const MAX_ATTEMPTS = 2;
+    let best = null, bestBer = Infinity;
     try {
-      const { samples } = await transmitLive(chips, { chipMs: CHIP_MS });
-      const dec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
-      const rawDec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
-      const result = {
-        samples,
-        text: dec.ok ? dec.text : '',
-        rawText: rawDec.ok ? rawDec.text : '',
-        checksumOk: !!dec.checksumOk,
-        calibration: dec.calibration,
-      };
-      present(result, chips);
-      if (!dec.ok || dec.text !== msg) {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        setStatus(`Live: attempt ${attempt} of ${MAX_ATTEMPTS} — transmitting through real cache contention on this machine…`);
+        const { samples } = await transmitLive(chips, { chipMs: CHIP_MS });
+        const dec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
+        const rawDec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
+        const text = dec.ok ? dec.text : '';
+        const ber = bitErrorRate(msg, text);
+        const cand = {
+          samples, text,
+          rawText: rawDec.ok ? rawDec.text : '',
+          checksumOk: !!dec.checksumOk,
+          calibration: dec.calibration,
+          source: 'live',
+        };
+        if (ber < bestBer) { best = cand; bestBer = ber; }
+        if (cand.checksumOk && text === msg) break; // clean decode — no need to retry
+      }
+
+      const sep = best && best.calibration ? (best.calibration.separation || 0) : 0;
+      const clean = best && best.checksumOk && best.text === msg;
+
+      if (!clean && sep < 2.0) {
+        // No usable contention this run (flat scope, ~coin-flip): the OS likely
+        // kept both ends on one core. Fall back to the model, clearly labelled.
         els.liveNote.style.display = '';
+        runReplay(`Live channel too weak right now (${sep.toFixed(1)}× preamble separation — usually core scheduling) —`);
+      } else {
+        if (!clean) els.liveNote.style.display = '';
+        setBadge('live');
+        present(best, chips);
       }
     } catch (e) {
-      setStatus('Live channel failed (' + e.message + ') — falling back to replay.', 'err');
       els.liveNote.style.display = '';
-      runReplay();
+      runReplay('Live channel failed (' + e.message + ') —');
     } finally {
       els.run.disabled = false;
     }

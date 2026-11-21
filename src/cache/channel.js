@@ -41,6 +41,13 @@ export const SENDER_WORKER_SRC = `
   self.onmessage = (e) => {
     const { chips, chipMs, startAt, bufMB } = e.data;
     ensureBuf(bufMB || 24);
+    // Warm-up thrash before the aligned frame: nudges the scheduler to place
+    // this worker on its own (performance) core and ramps the clock, so the
+    // first chips already see full contention instead of a cold start - the
+    // single biggest cause of a flat, undecodable first run.
+    { const t0 = performance.now(); let a = 0;
+      while (performance.now() - t0 < 25) { for (let i = 0; i < buf.length; i += 64) a ^= buf[i]; }
+      if (a === 0.5) self.postMessage({ warm: a }); }
     while (Date.now() < startAt) {}   // align to the shared start instant
     let acc = 0;
     for (let k=0;k<chips.length;k++){
@@ -106,7 +113,7 @@ export async function transmitLive(chips, params = {}) {
   const worker = new Worker(url);
 
   try {
-    const startAt = Date.now() + 200; // lead time for both ends to be ready
+    const startAt = Date.now() + 320; // lead for alloc + sender warm-up + both ends ready
     worker.postMessage({ chips, chipMs, startAt, bufMB });
 
     while (Date.now() < startAt) { /* spin to the shared start */ }
