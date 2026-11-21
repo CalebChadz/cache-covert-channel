@@ -670,7 +670,10 @@ footer.site { border-top: 1px solid var(--line); margin-top: 24px; background: r
     author's machine the adaptive version reached a live channel in 9 of 11
     runs (the previous fixed-size version: 0 of 7). Of the live runs read back
     from their traces, 2 of 5 decoded cleanly and 3 had one or two flipped bits,
-    each caught by the checksum. <strong>Save trace</strong> keeps all of it, failures included.</li>
+    each caught by the checksum. Two runs started by hand did better: both
+    landed on the performance cores and decoded cleanly at 9–10×
+    separation. <strong>Save trace</strong> keeps all of it, failures included,
+    and records whether the machine was on battery or mains.</li>
     <li><strong>Timing is agreed out-of-band.</strong> The page tells both
     Workers when to start through an ordinary message, and both sides keep time against
     the wall clock from that instant. The payload never travels that way, but
@@ -1994,11 +1997,21 @@ const RECEIVER_WORKER_SRC = `
     for (let i = 0; i < steps; i++) p = pool[p];
     return ((performance.now() - t0) * 1e6) / steps;
   }
-  // ns/access over a region timed for ~targetMs (many clock ticks).
+  // ns/access over a region timed for ~targetMs. The browser clock ticks in
+  // ~100 us steps, so a short pilot can read 0 (no tick) or one stray tick;
+  // the old version scaled from that pilot and could time too few steps,
+  // recording 0 ns and inventing cache edges. Grow the step count until a run
+  // spans at least half the target (many ticks), then time the full target.
   function timed(targetMs) {
-    const est = walk(20000);
-    const steps = Math.max(20000, Math.min(5e6, Math.round((targetMs * 1e6) / Math.max(est, 0.3))));
-    return walk(steps);
+    let steps = 20000;
+    for (;;) {
+      const ns = walk(steps);
+      if ((ns * steps) / 1e6 >= targetMs * 0.5 || steps >= 4e7) {
+        const full = Math.min(4e7, Math.max(steps, Math.round((targetMs * 1e6) / Math.max(ns, 0.05))));
+        return walk(full);
+      }
+      steps *= 4;
+    }
   }
   self.onmessage = (e) => {
     const m = e.data;
@@ -2046,6 +2059,9 @@ function liveSupported() {
 // L1-sized edges are skipped: L1 is private to a core, never the shared level.
 function planFromCalibration(points, opts = {}) {
   const { minProbe = 512 * 1024, maxProbe = 48 * MiB, fill = 0.85, innerFill = 0.6, maxCandidates = 4 } = opts;
+  // Safety net: drop unusable readings (0 ns = the clock never ticked) so a
+  // bad sample can't masquerade as a cache edge.
+  points = points.filter((p) => Number.isFinite(p.ns) && p.ns > 0);
   const det = detectKnees(points);
   const caps = [...new Set([...det.rawKnees, ...det.knees].map((k) => k.capacityBytes))]
     .filter((c) => c >= minProbe)
@@ -2270,6 +2286,19 @@ function initChannel() {
   let lastTrace = null; // the most recent result, in the shared trace format
   let liveDiag = null;  // calibration, pre-flights and attempts of the latest live run
 
+  // Power state, recorded in every trace to test whether live runs behave
+  // differently on battery vs mains (an open hypothesis - see data/power/).
+  // Only Chromium exposes it; elsewhere the trace says so instead of guessing.
+  let power = { available: false, reason: 'navigator.getBattery not supported in this browser' };
+  if (typeof navigator !== 'undefined' && navigator.getBattery) {
+    navigator.getBattery().then((b) => {
+      const upd = () => { power = { available: true, charging: b.charging, level: b.level, source: 'navigator.getBattery' }; };
+      upd();
+      b.addEventListener('chargingchange', upd);
+      b.addEventListener('levelchange', upd);
+    }).catch((e) => { power = { available: false, reason: String(e && e.message || e) }; });
+  }
+
   // ---- Save trace --------------------------------------------------------
   // Exports exactly what the page decoded from, in the same JSON shape as
   // native/channel.c --trace ("cache-covert-channel/trace@1"), so a live run
@@ -2283,6 +2312,7 @@ function initChannel() {
       machine: navigator.userAgent,
       logical_cores: navigator.hardwareConcurrency || null,
       captured: new Date().toISOString(),
+      power: { ...power },
       params: {
         chip_ms: CHIP_MS,
         fec: els.fec.checked,

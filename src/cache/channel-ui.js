@@ -130,6 +130,19 @@ export function initChannel() {
   let lastTrace = null; // the most recent result, in the shared trace format
   let liveDiag = null;  // calibration, pre-flights and attempts of the latest live run
 
+  // Power state, recorded in every trace to test whether live runs behave
+  // differently on battery vs mains (an open hypothesis - see data/power/).
+  // Only Chromium exposes it; elsewhere the trace says so instead of guessing.
+  let power = { available: false, reason: 'navigator.getBattery not supported in this browser' };
+  if (typeof navigator !== 'undefined' && navigator.getBattery) {
+    navigator.getBattery().then((b) => {
+      const upd = () => { power = { available: true, charging: b.charging, level: b.level, source: 'navigator.getBattery' }; };
+      upd();
+      b.addEventListener('chargingchange', upd);
+      b.addEventListener('levelchange', upd);
+    }).catch((e) => { power = { available: false, reason: String(e && e.message || e) }; });
+  }
+
   // ---- Save trace --------------------------------------------------------
   // Exports exactly what the page decoded from, in the same JSON shape as
   // native/channel.c --trace ("cache-covert-channel/trace@1"), so a live run
@@ -143,6 +156,7 @@ export function initChannel() {
       machine: navigator.userAgent,
       logical_cores: navigator.hardwareConcurrency || null,
       captured: new Date().toISOString(),
+      power: { ...power },
       params: {
         chip_ms: CHIP_MS,
         fec: els.fec.checked,

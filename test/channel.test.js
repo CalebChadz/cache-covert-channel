@@ -261,3 +261,15 @@ test('preflight separation is high/low and ignores missing samples', () => {
   assert.equal(preflightSeparation([90, 9, NaN, 9]).separation, 10);
   assert.ok(preflightSeparation([20, 20, 20, 20]).separation === 1);
 });
+
+test('plan: zero-ns readings (clock never ticked) are ignored, not treated as cache edges', () => {
+  // From a real browser trace: a flat ~6 ns performance-core curve with stray
+  // 0 ns points at 2, 4 and 8 MB produced fake edges and a wasted 1.2 MB probe.
+  const mb = [0.25, 0.375, 0.5, 0.6875, 1, 1.4375, 2, 2.8125, 4, 5.6875, 8, 11.3125, 16, 22.625, 32, 45.25, 64];
+  const ns = [6, 6, 6, 5, 6, 6, 0, 6, 0, 8, 0, 9, 12, 12, 50, 100, 112];
+  const withZeros = mb.map((m, i) => ({ bytes: Math.round(m * MB_), ns: ns[i] }));
+  const clean = withZeros.filter((p) => p.ns > 0);
+  const a = planFromCalibration(withZeros), b = planFromCalibration(clean);
+  assert.deepEqual(a.probes, b.probes);
+  assert.ok(a.probes.every((p) => p > 2 * MB_), `no tiny probe from a fake edge: ${a.probes}`);
+});

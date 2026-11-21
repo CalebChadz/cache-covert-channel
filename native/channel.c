@@ -293,6 +293,7 @@ static void write_trace(const char *path, const opts_t *o, const double *x, long
   fprintf(f, "{\n  \"format\": \"cache-covert-channel/trace@1\",\n  \"source\": \"native-cross-process\",\n");
   fprintf(f, "  \"machine\": "); json_str(f, mach);
   fprintf(f, ",\n  \"captured\": \"%s\",\n", date);
+  { char pw[384]; power_json(pw, sizeof pw); fprintf(f, "  \"power\": %s,\n", pw); }
   fprintf(f, "  \"params\": { \"chip_ms\": %g, \"sample_ms\": %g, \"probe_mb\": %d, \"probe_steps\": %d, \"sender_buf_mb\": %d, \"qos\": ",
           o->chip_ms, o->sample_ms, o->probe_mb, o->probe_steps, o->buf_mb);
   json_str(f, o->qos);

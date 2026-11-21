@@ -51,4 +51,44 @@ static inline void machine_line(char *out, size_t len) {
 #endif
 }
 
+// Power state as a JSON object, for traces: are we on mains or battery?
+// macOS: parsed from `pmset -g batt`. Linux: /sys/class/power_supply.
+// Anything unreadable is reported as unavailable rather than guessed.
+#include <stdlib.h>
+static inline void power_json(char *out, size_t len) {
+  snprintf(out, len, "{ \"available\": false }");
+#ifdef __APPLE__
+  FILE *f = popen("pmset -g batt 2>/dev/null", "r");
+  if (!f) return;
+  char line[256], src[64] = "", status[64] = ""; int pct = -1;
+  while (fgets(line, sizeof line, f)) {
+    char *q = strstr(line, "drawing from '");
+    if (q) { q += 14; size_t k = 0; while (*q && *q != '\'' && k < sizeof src - 1) src[k++] = *q++; src[k] = 0; }
+    char *pc = strchr(line, '%');
+    if (pc && pct < 0) {
+      char *b = pc; while (b > line && b[-1] >= '0' && b[-1] <= '9') b--;
+      pct = atoi(b);
+      char *sc = strchr(pc, ';');
+      if (sc) { sc++; while (*sc == ' ') sc++; size_t k = 0; while (*sc && *sc != ';' && *sc != '\n' && k < sizeof status - 1) status[k++] = *sc++; status[k] = 0; }
+    }
+  }
+  pclose(f);
+  if (!src[0]) return;
+  snprintf(out, len, "{ \"available\": true, \"source\": \"pmset\", \"power_source\": \"%s\", \"charging\": %s, \"level\": %.2f, \"status\": \"%s\" }",
+           src, !strcmp(status, "charging") ? "true" : "false",
+           pct >= 0 ? pct / 100.0 : -1.0, status);
+#else
+  int ac = -1, cap = -1; char st[32] = "";
+  FILE *f;
+  const char *acs[] = { "/sys/class/power_supply/AC/online", "/sys/class/power_supply/ACAD/online", "/sys/class/power_supply/ADP1/online" };
+  for (int i = 0; i < 3 && ac < 0; i++) if ((f = fopen(acs[i], "r"))) { if (fscanf(f, "%d", &ac) != 1) ac = -1; fclose(f); }
+  if ((f = fopen("/sys/class/power_supply/BAT0/capacity", "r"))) { if (fscanf(f, "%d", &cap) != 1) cap = -1; fclose(f); }
+  if ((f = fopen("/sys/class/power_supply/BAT0/status", "r"))) { if (fscanf(f, "%31s", st) != 1) st[0] = 0; fclose(f); }
+  if (ac < 0 && cap < 0) return; // desktop/VM: no power supply info
+  snprintf(out, len, "{ \"available\": true, \"source\": \"sysfs\", \"power_source\": \"%s\", \"charging\": %s, \"level\": %.2f, \"status\": \"%s\" }",
+           ac == 1 ? "AC Power" : (ac == 0 ? "Battery Power" : "unknown"),
+           !strcmp(st, "Charging") ? "true" : "false", cap >= 0 ? cap / 100.0 : -1.0, st);
+#endif
+}
+
 #endif

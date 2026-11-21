@@ -319,7 +319,10 @@
     author's machine the adaptive version reached a live channel in 9 of 11
     runs (the previous fixed-size version: 0 of 7). Of the live runs read back
     from their traces, 2 of 5 decoded cleanly and 3 had one or two flipped bits,
-    each caught by the checksum. <strong>Save trace</strong> keeps all of it, failures included.</li>
+    each caught by the checksum. Two runs started by hand did better: both
+    landed on the performance cores and decoded cleanly at 9–10×
+    separation. <strong>Save trace</strong> keeps all of it, failures included,
+    and records whether the machine was on battery or mains.</li>
     <li><strong>Timing is agreed out-of-band.</strong> The page tells both
     Workers when to start through an ordinary message, and both sides keep time against
     the wall clock from that instant. The payload never travels that way, but

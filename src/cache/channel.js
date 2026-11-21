@@ -95,11 +95,21 @@ export const RECEIVER_WORKER_SRC = `
     for (let i = 0; i < steps; i++) p = pool[p];
     return ((performance.now() - t0) * 1e6) / steps;
   }
-  // ns/access over a region timed for ~targetMs (many clock ticks).
+  // ns/access over a region timed for ~targetMs. The browser clock ticks in
+  // ~100 us steps, so a short pilot can read 0 (no tick) or one stray tick;
+  // the old version scaled from that pilot and could time too few steps,
+  // recording 0 ns and inventing cache edges. Grow the step count until a run
+  // spans at least half the target (many ticks), then time the full target.
   function timed(targetMs) {
-    const est = walk(20000);
-    const steps = Math.max(20000, Math.min(5e6, Math.round((targetMs * 1e6) / Math.max(est, 0.3))));
-    return walk(steps);
+    let steps = 20000;
+    for (;;) {
+      const ns = walk(steps);
+      if ((ns * steps) / 1e6 >= targetMs * 0.5 || steps >= 4e7) {
+        const full = Math.min(4e7, Math.max(steps, Math.round((targetMs * 1e6) / Math.max(ns, 0.05))));
+        return walk(full);
+      }
+      steps *= 4;
+    }
   }
   self.onmessage = (e) => {
     const m = e.data;
@@ -148,6 +158,9 @@ export function liveSupported() {
 // L1-sized edges are skipped: L1 is private to a core, never the shared level.
 export function planFromCalibration(points, opts = {}) {
   const { minProbe = 512 * 1024, maxProbe = 48 * MiB, fill = 0.85, innerFill = 0.6, maxCandidates = 4 } = opts;
+  // Safety net: drop unusable readings (0 ns = the clock never ticked) so a
+  // bad sample can't masquerade as a cache edge.
+  points = points.filter((p) => Number.isFinite(p.ns) && p.ns > 0);
   const det = detectKnees(points);
   const caps = [...new Set([...det.rawKnees, ...det.knees].map((k) => k.capacityBytes))]
     .filter((c) => c >= minProbe)

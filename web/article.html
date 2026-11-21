@@ -829,6 +829,38 @@ export function manchesterEncode(bits) {
     Caveats: one machine, one session, and a browser driven by automation
     tooling, which may itself affect scheduling.
   </p>
+  <p>
+    That last caveat turned out to matter. Two live runs I started by hand
+    shortly afterwards (traces in <code>data/browser/</code>) look completely
+    different. Their calibration put the receiver on the
+    <strong>performance</strong> cores: ~6 ns per access flat to about 8 MB,
+    edges at 16 and 32 MB. The adaptive choice was a 4.8 or 6.8 MB probe, the
+    pre-flights separated <strong>9–10.6×</strong>, and both decoded
+    <code>cache</code> cleanly on the first attempt with zero bit errors. The
+    samples alternate ~92 / ~9 ns, the same contrast the native measurements and
+    the original calibration show. So the automated tally above probably
+    understates a real visitor's experience. Driven by automation, the Workers
+    kept landing on the efficiency cores; started by a person, they landed on
+    the performance cores. Two runs is a strong hint, not a result. Note that
+    the adaptive design picked a sensible probe in both cases (~3 MB on the
+    efficiency cores, ~5–7 MB on the performance cores).
+  </p>
+  <p>
+    Those traces also exposed a calibration bug. A few sweep points read
+    <strong>0 ns</strong>: the step count had been scaled from a pilot too
+    short for the 100 µs clock to tick, and the lower of two readings was kept.
+    The zeros created fake cache edges, which cost a wasted pre-flight (a
+    1.2 MB probe, 1.0×). The sweep now grows its step count until each
+    measurement spans many clock ticks, and the planner ignores unusable
+    readings. There's a regression test built from that trace.
+  </p>
+  <p>
+    Every trace now records the <strong>power state</strong> as well (Chromium's
+    battery API in the browser; <code>pmset</code> or sysfs natively). Every
+    successful live run so far happened on battery, so "does mains power change
+    core placement?" is now testable rather than a guess. Runs so far are listed
+    in <code>data/power/</code>.
+  </p>
 
   <div class="keyidea">
     <p>

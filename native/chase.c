@@ -198,6 +198,7 @@ int main(int argc, char **argv) {
   time_t now = time(NULL); char date[32];
   strftime(date, sizeof date, "%Y-%m-%d", localtime(&now));
   printf("# cache-covert-channel native/chase.c\n# machine: %s\n# date: %s\n", mach, date);
+  { char pw[384]; power_json(pw, sizeof pw); printf("# power: %s\n", pw); }
   printf("# qos: %s  repeats: %d  target_ms: %.0f  per_octave: %d\n", qos, repeats, target_ms, per_octave);
   printf("mode,qos,window_bytes,ns_median,ns_min,ns_max,steps\n");
 
