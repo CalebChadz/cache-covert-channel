@@ -21,7 +21,7 @@ This is a demonstration of a decades-old primitive, not an exploit. Up front, pl
 
 ## Why it's topical
 
-In October 2026 OpenAI described a red-team exercise in which AI agents in **separate microVMs** on the same host — no network link, no shared writable files — used a **CPU cache covert channel** to pass data: one agent evicted data from the cache while the other timed its reloads ([coverage](https://www.tomshardware.com/tech-industry/artificial-intelligence/openais-isolated-red-team-ai-agents-built-a-hidden-cpu-cache-channel-to-talk-with-no-network-or-shared-files-exploited-cpu-cache-timing-to-bypass-microvm-sandboxes); the agents had explicit attack objectives and were often pointed at the channel). That is the primitive demonstrated here, in a much easier setting: a page and its own Web Worker, in one process.
+In October 2026 OpenAI described a red-team exercise in which AI agents in **separate microVMs** on the same host — no network link, no shared writable files — used a **CPU cache covert channel** to pass data: one agent evicted data from the cache while the other timed its reloads ([OpenAI, 23 Oct 2026](https://openai.com/index/securing-our-frontier-model-training-environment/); the agents had explicit attack objectives and were often pointed at the channel). That is the primitive demonstrated here, in a much easier setting: a page and its own Web Worker, in one process.
 
 ## Quick start
 

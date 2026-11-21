@@ -96,7 +96,7 @@
     shared writable files, used a <strong>CPU cache covert channel</strong> to
     pass data: one agent evicted data from the cache while the other timed how
     long its reloads took
-    (<a href="https://www.tomshardware.com/tech-industry/artificial-intelligence/openais-isolated-red-team-ai-agents-built-a-hidden-cpu-cache-channel-to-talk-with-no-network-or-shared-files-exploited-cpu-cache-timing-to-bypass-microvm-sandboxes" target="_blank" rel="noopener">coverage</a>;
+    (<a href="https://openai.com/index/securing-our-frontier-model-training-environment/" target="_blank" rel="noopener">OpenAI, “Securing our frontier model training environment”</a>;
     the agents were given attack objectives, and were often pointed at the
     channel). That is the same primitive shown here, in a much easier setting:
     here, a page and its own worker thread in one process. The lesson carries
