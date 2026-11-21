@@ -156,6 +156,8 @@ export function initChannel() {
       machine: navigator.userAgent,
       logical_cores: navigator.hardwareConcurrency || null,
       captured: new Date().toISOString(),
+      page: typeof location !== 'undefined' ? location.origin + location.pathname : null,
+      build: typeof BUILD !== 'undefined' ? BUILD : null,
       power: { ...power },
       params: {
         chip_ms: CHIP_MS,
@@ -178,7 +180,7 @@ export function initChannel() {
         threshold_ns: th,
         preamble_separation: result.calibration ? result.calibration.separation : null,
       },
-      sent: els.message.value,
+      sent: result.sent != null ? result.sent : els.message.value,
       payload_bit_errors_rate: result.text ? ber : null,
       raw_bit_error_prob: pRaw,
       capacity_bps_estimate: Math.round(capacity * 1000) / 1000,
@@ -271,7 +273,10 @@ export function initChannel() {
   }
 
   function finalReadouts(result, truthChips) {
-    const truth = els.message.value;
+    // The message as it was when this run STARTED - the box may have been
+    // edited since (a saved trace once claimed 'cache me outside' for a
+    // 160-chip 'cache' frame).
+    const truth = result.sent != null ? result.sent : els.message.value;
     const ber = bitErrorRate(truth, result.text || '');
     const pRaw = rawBitErrorProb(result, truthChips);
     els.sent.textContent = truth;
@@ -334,6 +339,7 @@ export function initChannel() {
       checksumOk: !!dec.checksumOk,
       calibration: dec.calibration,
       source: 'sim',
+      sent: msg,
       note: note || null,
     };
     setBadge('sim');
@@ -406,6 +412,7 @@ export function initChannel() {
           checksumOk: !!dec.checksumOk,
           calibration: dec.calibration,
           source: 'live',
+          sent: msg,
           regionBytes: tx.regionBytes, bufMB: tx.bufMB, probeSteps: tx.probeSteps, idleNs: tx.idleNs,
           note: `Live (${fmt(best.region)} probe, chosen from pre-flights: ${tried}).`,
         };
@@ -444,10 +451,21 @@ export function initChannel() {
   els.quality.addEventListener('input', () => { els.qualityOut.textContent = els.quality.value + '%'; });
   els.coarsen.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });
   els.quality.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });
+  // The defence dial only drives the SIMULATION; in Live mode it would
+  // silently do nothing, so disable it and say why.
+  function syncDial() {
+    const live = els.mode.value === 'live';
+    els.quality.disabled = live;
+    els.coarsen.disabled = live;
+    const hint = $('chDialHint');
+    if (hint) hint.hidden = !live;
+  }
   els.mode.addEventListener('change', () => {
     liveDiag = null;
     els.liveNote.style.display = els.mode.value === 'live' ? '' : 'none';
+    syncDial();
   });
+  syncDial();
   // Repaint the last frame at the new width (rotation, window resize) so the
   // canvases never stay stretched or blurry. rAF-throttled.
   let resizeQueued = false;

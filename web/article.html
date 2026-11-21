@@ -830,20 +830,21 @@ export function manchesterEncode(bits) {
     tooling, which may itself affect scheduling.
   </p>
   <p>
-    That last caveat turned out to matter. Two live runs I started by hand
-    shortly afterwards (traces in <code>data/browser/</code>) look completely
-    different. Their calibration put the receiver on the
+    That last caveat turned out to matter. Live runs started by hand (eight so
+    far, traces in <code>data/browser/</code>) look completely different. Their calibration put the receiver on the
     <strong>performance</strong> cores: ~6 ns per access flat to about 8 MB,
     edges at 16 and 32 MB. The adaptive choice was a 4.8 or 6.8 MB probe, the
-    pre-flights separated <strong>9–10.6×</strong>, and both decoded
-    <code>cache</code> cleanly on the first attempt with zero bit errors. The
+    pre-flights separated <strong>9–11×</strong>, and <strong>all eight decoded
+    the full message intact</strong>, seven on the first attempt, including the
+    16-character <code>cache me outside</code>. The
     samples alternate ~92 / ~9 ns, the same contrast the native measurements and
     the original calibration show. So the automated tally above probably
     understates a real visitor's experience. Driven by automation, the Workers
     kept landing on the efficiency cores; started by a person, they landed on
-    the performance cores. Two runs is a strong hint, not a result. Note that
+    the performance cores. Eight runs on one machine is a strong pattern, not a
+    general result. Note that
     the adaptive design picked a sensible probe in both cases (~3 MB on the
-    efficiency cores, ~5–7 MB on the performance cores).
+    efficiency cores, ~5–10 MB on the performance cores).
   </p>
   <p>
     Those traces also exposed a calibration bug. A few sweep points read

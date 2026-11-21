@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 import { SHELL_CSS } from '../src/shell/css.js';
 import { navHtml, footerHtml, headHtml } from '../src/shell/nav.js';
 
@@ -37,11 +38,21 @@ const PAGES = [
       'src/cache/channel-ui.js',
     ],
     data: () =>
+      `const BUILD = ${JSON.stringify(buildInfo())};\n` +
       `const FIXTURES = ${readRoot('data/cache/fixtures.json').trim()};\n` +
       `const CHANNEL_FIXTURE = ${readRoot('data/cache/channel-fixture.json').trim()};`,
   },
   { id: 'article', out: 'article.html', template: 'web/article.html', modules: [], data: null },
 ];
+
+// Which source a page was built from, stamped into it so saved traces say
+// exactly which version produced them (a stale deploy once made traces
+// silently lack a field). `--dirty` marks uncommitted local changes.
+function buildInfo() {
+  let commit = 'unknown';
+  try { commit = execSync('git describe --always --dirty', { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch {}
+  return { commit };
+}
 
 const stripModuleSyntax = (src) =>
   src
