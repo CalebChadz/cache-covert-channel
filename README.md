@@ -6,7 +6,8 @@ This is a browser demo and write-up of a *cooperative* cache-timing covert chann
 
 > **measure** the cache hierarchy out of a clock → watch the naive attack **fail** → **weaponise** the timing primitive into a covert channel → try to **defend** it.
 
-👉 **Live demo:** `dist/cache.html` · **Write-up:** `dist/article.html`
+👉 **[Live site](https://calebchadz.github.io/cache-covert-channel/)** · **[Demo](https://calebchadz.github.io/cache-covert-channel/cache.html)** · **[Write-up](https://calebchadz.github.io/cache-covert-channel/article.html)**  
+(Offline: build, then open `dist/cache.html` / `dist/article.html` directly.)
 
 ---
 
@@ -113,7 +114,7 @@ node --test "test/*.test.js"
 
 ## Credits & origin
 
-Built by **Caleb Chadderton**. The full write-up, including a claim-by-claim account of the evidence and its limits, is the [How it works](dist/article.html) page.
+Built by **Caleb Chadderton**. The full write-up, including a claim-by-claim account of the evidence and its limits, is the [How it works](https://calebchadz.github.io/cache-covert-channel/article.html) page.
 
 ## License
 
