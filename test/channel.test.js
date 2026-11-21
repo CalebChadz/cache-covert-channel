@@ -202,3 +202,62 @@ test('message length is capped at one byte of length field', () => {
   const long = 'x'.repeat(256);
   assert.throws(() => encodeFrame(long), RangeError);
 });
+
+// ------------------------------------------------- adaptive live channel --
+
+import { planFromCalibration, preflightSeparation } from '../src/cache/channel.js';
+import { readFileSync } from 'node:fs';
+
+test('differential decisions survive a level drift that breaks a fixed threshold', () => {
+  // Calibrate on a clean preamble, then let both levels climb 6x mid-frame
+  // (e.g. the OS moved the thread to slower cores): "idle" chips end up above
+  // the preamble threshold. Comparing each chip pair still decodes.
+  const msg = 'drift';
+  const { chips, preambleChips } = encodeFrame(msg);
+  const samples = chips.map((c, i) => {
+    const scale = i < preambleChips + 40 ? 1 : 6; // idle 54 ns > threshold 49.5
+    return (c ? 90 : 9) * scale;
+  });
+  const fixed = decodeSamples(samples, { preambleChips, differential: false });
+  const diff = decodeSamples(samples, { preambleChips });
+  assert.notEqual(fixed.ok && fixed.text, msg, 'fixed threshold should fail under drift');
+  assert.equal(diff.text, msg);
+  assert.equal(diff.checksumOk, true);
+});
+
+const MB_ = 1024 * 1024;
+const shipped = JSON.parse(readFileSync(new URL('../data/cache/fixtures.json', import.meta.url)));
+
+test('plan: performance-core sweep proposes probes inside the outer cache levels', () => {
+  const plan = planFromCalibration(shipped.chase.points);
+  assert.equal(plan.fallback, false);
+  assert.ok(plan.probes.length >= 1 && plan.probes.length <= 4);
+  for (const p of plan.probes) assert.ok(p >= 512 * 1024 && p <= 48 * MB_);
+  // The L1 edge (~128 KB) is never a candidate: L1 is private, not shared.
+  assert.ok(plan.edges.every((c) => c >= 512 * 1024));
+  assert.ok(plan.senderBufMB >= 24 && plan.senderBufMB <= 96);
+});
+
+test('plan: an efficiency-core-like curve (4 MB L2) yields a probe that fits in 4 MB', () => {
+  const pts = [];
+  for (let k = 0; k <= 16; k++) {
+    const bytes = 256 * 1024 * Math.pow(2, k / 2);
+    const ns = bytes <= 3.5 * MB_ ? 15 : bytes <= 64 * MB_ ? 150 : 200;
+    pts.push({ bytes: Math.round(bytes), ns });
+  }
+  const plan = planFromCalibration(pts);
+  assert.ok(plan.probes.some((p) => p <= 4 * MB_ && p >= 1 * MB_), `got ${plan.probes}`);
+});
+
+test('plan: a flat sweep falls back to common shared-level sizes', () => {
+  const pts = [256, 512, 1024, 2048, 4096, 8192].map((k) => ({ bytes: k * 1024, ns: 5 }));
+  const plan = planFromCalibration(pts);
+  assert.equal(plan.fallback, true);
+  assert.deepEqual(plan.probes, [3 * MB_, 8 * MB_]);
+});
+
+test('preflight separation is high/low and ignores missing samples', () => {
+  assert.equal(preflightSeparation([90, 9, 90, 9]).separation, 10);
+  assert.equal(preflightSeparation([90, 9, NaN, 9]).separation, 10);
+  assert.ok(preflightSeparation([20, 20, 20, 20]).separation === 1);
+});

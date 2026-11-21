@@ -289,13 +289,13 @@
 <div class="prose">
   <h2>What you're looking at</h2>
   <p>
-    Two threads of this page — the main thread (receiver) and a Web Worker
-    (sender) — pass a message without the payload going through shared memory,
-    the network or storage. To send a <code>1</code>, the sender streams through
-    a 24 MB buffer for a time slot; for a <code>0</code> it waits. The receiver
-    repeatedly times a pointer chase over its own 8 MB region. When the sender is
-    busy, the receiver's data gets pushed out of the shared cache and its probe
-    slows from ~9 ns to ~90 ns per access. That difference is the message.
+    Two Web Workers started by this page — a sender and a receiver — pass a
+    message without the payload going through shared memory, the network or
+    storage; the main thread only coordinates. To send a <code>1</code>, the
+    sender streams through a large buffer for a time slot; for a <code>0</code>
+    it waits. The receiver repeatedly times a pointer chase over its own region.
+    When the sender is busy, the receiver's data gets pushed out of the cache
+    they share and its probe slows down. That difference is the message.
   </p>
   <p>
     It's a <strong>covert channel</strong> between two parties who both want to
@@ -308,14 +308,20 @@
     <li><strong>Replay is a simulation.</strong> It's seeded and calibrated to
     live measurements (~9 ns idle, ~90 ns busy), so it looks the same on every
     machine. The badge always says which one you're seeing.</li>
-    <li><strong>Live is real, and best-effort.</strong> It runs a ~1 s pre-flight
-    check first. If the slow/fast gap is under 2× (common when the OS puts both
-    threads on the same core, or the machine is busy), it switches to the
-    simulation and says so. On the author's machine, live decoded
-    <code>cache</code> intact at a raw 12.5 b/s (about 6 b/s once framing
-    overhead is counted).</li>
-    <li><strong>Timing is agreed out-of-band.</strong> The page tells the worker
-    when to start through an ordinary message, and both sides keep time against
+    <li><strong>Live adapts to your chip.</strong> The receiver first measures
+    its own core's cache sizes with a quick sweep (the same pointer chase as the
+    top of this page). Each cache edge suggests a probe size, a ~1 s pre-flight
+    tries each one, and the best is used. That matters because the two ends only
+    have a channel when they share a cache, and which cache that is depends on
+    the chip and on where the OS puts the threads.</li>
+    <li><strong>Live is real, and best-effort.</strong> If no probe size reaches
+    1.6× separation, the page switches to the simulation and says so. On the
+    author's machine the adaptive version reached a live channel in 9 of 11
+    runs (the previous fixed-size version: 0 of 7). Of the live runs read back
+    from their traces, 2 of 5 decoded cleanly and 3 had one or two flipped bits,
+    each caught by the checksum. <strong>Save trace</strong> keeps all of it, failures included.</li>
+    <li><strong>Timing is agreed out-of-band.</strong> The page tells both
+    Workers when to start through an ordinary message, and both sides keep time against
     the wall clock from that instant. The payload never travels that way, but
     genuinely isolated parties would have to recover timing from the signal.</li>
     <li><strong>Manchester coding</strong> sends each bit as a transition

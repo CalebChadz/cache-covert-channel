@@ -905,10 +905,11 @@ for (let i = 0; i &lt; steps; i++) {
 
   <p>
     So far the timing trick only reads a harmless fact about the hardware. The
-    finale puts it to work. Two threads of the same page — the main thread
-    (receiver) and a Web Worker it starts (sender) — pass a message using
-    contention for the cache and memory system, not any channel built for
-    communication.
+    finale puts it to work. Two Web Workers started by the same page, a sender
+    and a receiver, pass a message using contention for a shared cache, not any
+    channel built for communication. (Earlier versions put the receiver on the
+    page's main thread; why that changed is below, under "Adapting to the
+    chip".)
   </p>
 
   <figure>
@@ -928,7 +929,7 @@ for (let i = 0; i &lt; steps; i++) {
       <text x="360" y="164" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">physically shared</text>
       <!-- receiver -->
       <rect x="510" y="60" width="180" height="150" rx="10" style="fill:var(--panel);stroke:var(--line);stroke-width:1.5"/>
-      <text x="600" y="84" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">RECEIVER (main thread)</text>
+      <text x="600" y="84" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">RECEIVER (Web Worker)</text>
       <text x="600" y="112" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">times its OWN probe:</text>
       <text x="600" y="134" text-anchor="middle" style="font:11px sans-serif;fill:var(--text)">slow probe (~90 ns)</text>
       <text x="600" y="150" text-anchor="middle" style="font:600 11px sans-serif;fill:var(--err)">→ reads a 1</text>
@@ -952,10 +953,12 @@ for (let i = 0; i &lt; steps; i++) {
   </figure>
 
   <p>
-    To send a <code>1</code>, the sender streams through a 24 MB buffer as hard as
-    it can for one time slot; to send a <code>0</code> it waits. The receiver
-    repeatedly times a pointer chase over its own 8 MB region. When the sender is
-    busy, the receiver's probe slows down.
+    To send a <code>1</code>, the sender streams through a large buffer as hard
+    as it can for one time slot; to send a <code>0</code> it waits. The receiver
+    repeatedly times a pointer chase over its own region. When the sender is
+    busy, the receiver's probe slows down. (The figures below come from the
+    original fixed sizes, a 24 MB sender buffer and an 8 MB probe; the current
+    version sizes both from a measurement of the chip.)
   </p>
 
   <p class="filetag">src/cache/channel.js — the sender, running in a Worker</p>
@@ -968,14 +971,12 @@ function thrash(ms){
   return acc;
 }</code></pre>
 
-  <p class="filetag">src/cache/channel.js — the receiver's probe (a dependent-load chain, as before)</p>
-  <pre class="code"><code>return function probeNs(steps) {
-  let p = 0;
+  <p class="filetag">src/cache/channel.js — the receiver's probe, running in a Worker (a dependent-load chain, as before)</p>
+  <pre class="code"><code>function walk(steps) {
   const t0 = performance.now();
-  for (let i = 0; i &lt; steps; i++) <b>p = buf[p];</b>  <span class="cm">// same pointer chase — its speed reveals whether we were evicted</span>
-  const t1 = performance.now();
-  return ((t1 - t0) * 1e6) / steps;
-};</code></pre>
+  for (let i = 0; i &lt; steps; i++) <b>p = pool[p];</b>  <span class="cm">// same pointer chase — its speed reveals whether we were evicted</span>
+  return ((performance.now() - t0) * 1e6) / steps;
+}</code></pre>
 
   <p>
     The live numbers line up with the hardware story. In the measurements the
@@ -999,8 +1000,8 @@ function thrash(ms){
   <ul>
     <li><strong>The payload never travels through a normal channel to the
     receiver.</strong> The decoder's only input is the list of latency samples.</li>
-    <li><strong>The start time does.</strong> The page gives the worker its chip
-    sequence and a start instant via <code>postMessage</code>, and both sides
+    <li><strong>The start time does.</strong> The page gives both Workers a
+    start instant (and the sender its chips) via <code>postMessage</code>, and both sides
     schedule every chip from that instant on the wall clock. Handing the sender
     the message is fine (a sender has to know what it's sending), but agreeing on
     the clock out-of-band is a convenience. Two genuinely isolated parties would
@@ -1129,11 +1130,56 @@ export function manchesterEncode(bits) {
     upper bound).</li>
     <li><strong>Reproducibility.</strong> The raw samples from that run aren't in
     the repository, so it's a reported observation, not data you can inspect.
-    The demo lets you try it on your own machine. If the ~1 s pre-flight check
-    shows less than 2× separation (common when the OS puts both threads on the
-    same core, or the machine is busy), the page switches to the simulation and
-    labels the result SIMULATED rather than presenting noise as a decode.</li>
+    The demo now has <strong>Save trace</strong>, so any run can be kept as
+    data. If no probe size separates well enough in the pre-flights, the page
+    switches to the simulation and labels the result SIMULATED rather than
+    presenting noise as a decode.</li>
   </ul>
+
+  <h3>Adapting to the chip (and why it used to fail)</h3>
+  <p>
+    After the site moved to GitHub Pages, live mode stopped finding a channel at
+    all. The code hadn't changed, so I logged what the receiver measured. It read
+    8.3 ns per access until the sender started (the performance cores' L2 figure
+    for an 8 MB region), then 140–370 ns on <em>every</em> chip, 1 or 0. Those
+    are efficiency-core numbers: that cluster's L2 is only 4 MB, so an 8 MB probe
+    falls out to main memory there. macOS had moved the page's main thread to
+    the other cluster once the sender got busy. Part 8 shows that a split across
+    clusters means no channel, so the earlier successes depended on how the OS
+    happened to place the threads.
+  </p>
+  <p>The live path now does three things differently:</p>
+  <ul>
+    <li><strong>Both ends are Workers.</strong> They get equal priority, so the
+    OS tends to place them together. The main thread only coordinates, which
+    also keeps the page responsive.</li>
+    <li><strong>It measures before it transmits.</strong> The receiver runs a
+    quick sweep (~1 s) on whatever core it landed on. The knee detector from
+    Part 3 finds that core's cache edges, and each edge proposes a probe that
+    fills 85% of that level, plus one roomier probe. A ~1 s pre-flight tries
+    each candidate on the same pair of Workers, and the best is used. The
+    sender's buffer is sized to overflow the largest level found. So a 4 MB
+    efficiency-core L2, a 16 MB performance-core L2 or a 32 MB desktop L3 each
+    get a probe that fits.</li>
+    <li><strong>Bits are decided by comparing the two halves</strong> of each
+    Manchester bit, not by testing each half against one threshold. Native
+    testing showed this survives the latency level drifting mid-message.</li>
+  </ul>
+  <p>
+    I compared the two versions in alternating runs on the same machine and
+    afternoon. The old version reached a live channel in <strong>0 of 7</strong>
+    runs (pre-flight separation 0.5–1.2×). The adaptive one reached it in
+    <strong>9 of 11</strong>. In practice it found the workers on the efficiency
+    cores, and the 2.4–3.4 MB probes won with 2.3–3.4× separation. Of the six
+    runs I read back from their saved traces, five reached a live channel: 2
+    decoded cleanly and 3 had one or two flipped bits (<code>cAche</code>,
+    <code>cac(</code>, <code>aáche</code>), each rejected by the checksum. The
+    sixth fell back to the simulation. So the channel is now usually
+    <em>there</em>, but at 40 ms chips it is still too noisy to be
+    reliable. Longer chips or error correction would be the next things to try.
+    Caveats: one machine, one session, and a browser driven by automation
+    tooling, which may itself affect scheduling.
+  </p>
 
   <div class="keyidea">
     <p>
@@ -1328,7 +1374,7 @@ export function manchesterEncode(bits) {
     <li><code>src/cache/linear.js</code> — the naive linear-stride walk, kept so you can watch it come out flat.</li>
     <li><code>src/cache/detect.js</code> — turns a curve into bracketed boundaries, and refuses to when there's no real range.</li>
     <li><code>src/cache/manchester.js</code> — the codec: text → bytes → bits → chips and back, with preamble, framing, checksum and optional error correction.</li>
-    <li><code>src/cache/channel.js</code> — the live channel: the Worker sender, the receiver probe, and the pre-flight check.</li>
+    <li><code>src/cache/channel.js</code> — the live channel: sender and receiver Workers, the calibration sweep, <code>planFromCalibration</code> (cache edges → probe sizes) and the pre-flights.</li>
     <li><code>src/cache/channel-sim.js</code> — the seeded simulator behind replay mode, the defence dial and the tests.</li>
     <li><code>data/cache/fixtures.json</code> — the captured sweeps plotted in Part 4 and on the demo page.</li>
     <li><code>native/</code> — the C measurement (<code>chase.c</code>), the cross-process channel (<code>channel.c</code>) and <code>batch.sh</code>; <code>data/native/</code> holds their results.</li>

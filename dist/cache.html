@@ -640,13 +640,13 @@ footer.site { border-top: 1px solid var(--line); margin-top: 24px; background: r
 <div class="prose">
   <h2>What you're looking at</h2>
   <p>
-    Two threads of this page — the main thread (receiver) and a Web Worker
-    (sender) — pass a message without the payload going through shared memory,
-    the network or storage. To send a <code>1</code>, the sender streams through
-    a 24 MB buffer for a time slot; for a <code>0</code> it waits. The receiver
-    repeatedly times a pointer chase over its own 8 MB region. When the sender is
-    busy, the receiver's data gets pushed out of the shared cache and its probe
-    slows from ~9 ns to ~90 ns per access. That difference is the message.
+    Two Web Workers started by this page — a sender and a receiver — pass a
+    message without the payload going through shared memory, the network or
+    storage; the main thread only coordinates. To send a <code>1</code>, the
+    sender streams through a large buffer for a time slot; for a <code>0</code>
+    it waits. The receiver repeatedly times a pointer chase over its own region.
+    When the sender is busy, the receiver's data gets pushed out of the cache
+    they share and its probe slows down. That difference is the message.
   </p>
   <p>
     It's a <strong>covert channel</strong> between two parties who both want to
@@ -659,14 +659,20 @@ footer.site { border-top: 1px solid var(--line); margin-top: 24px; background: r
     <li><strong>Replay is a simulation.</strong> It's seeded and calibrated to
     live measurements (~9 ns idle, ~90 ns busy), so it looks the same on every
     machine. The badge always says which one you're seeing.</li>
-    <li><strong>Live is real, and best-effort.</strong> It runs a ~1 s pre-flight
-    check first. If the slow/fast gap is under 2× (common when the OS puts both
-    threads on the same core, or the machine is busy), it switches to the
-    simulation and says so. On the author's machine, live decoded
-    <code>cache</code> intact at a raw 12.5 b/s (about 6 b/s once framing
-    overhead is counted).</li>
-    <li><strong>Timing is agreed out-of-band.</strong> The page tells the worker
-    when to start through an ordinary message, and both sides keep time against
+    <li><strong>Live adapts to your chip.</strong> The receiver first measures
+    its own core's cache sizes with a quick sweep (the same pointer chase as the
+    top of this page). Each cache edge suggests a probe size, a ~1 s pre-flight
+    tries each one, and the best is used. That matters because the two ends only
+    have a channel when they share a cache, and which cache that is depends on
+    the chip and on where the OS puts the threads.</li>
+    <li><strong>Live is real, and best-effort.</strong> If no probe size reaches
+    1.6× separation, the page switches to the simulation and says so. On the
+    author's machine the adaptive version reached a live channel in 9 of 11
+    runs (the previous fixed-size version: 0 of 7). Of the live runs read back
+    from their traces, 2 of 5 decoded cleanly and 3 had one or two flipped bits,
+    each caught by the checksum. <strong>Save trace</strong> keeps all of it, failures included.</li>
+    <li><strong>Timing is agreed out-of-band.</strong> The page tells both
+    Workers when to start through an ordinary message, and both sides keep time against
     the wall clock from that instant. The payload never travels that way, but
     genuinely isolated parties would have to recover timing from the signal.</li>
     <li><strong>Manchester coding</strong> sends each bit as a transition
@@ -1719,6 +1725,9 @@ function calibrate(preambleSamples) {
 
 // ---- full decode from a latency sample stream ------------------------------
 //
+// samples: one latency reading per chip, in order. opts.differential (default
+// true) decides bits by comparing each chip pair; false uses the threshold only.
+//
 // samples: one latency reading per chip, in order. Length should match the
 // encoded chip count when the clock is aligned (the live path guarantees this
 // by sampling on the shared cadence; the simulator produces it directly).
@@ -1744,6 +1753,19 @@ function decodeSamples(samples, opts = {}) {
   const dataChips = chips.slice(preambleChips);
 
   let { bits, violations } = manchesterDecode(dataChips);
+
+  // Differential decisions (default): a Manchester bit is one busy and one idle
+  // chip, so compare the two halves directly instead of each against a single
+  // threshold. That survives the latency level drifting mid-frame (clock or
+  // core changes), which a fixed threshold does not. Violations are still
+  // counted from the thresholded chips; a missing sample falls back to them.
+  if (opts.differential !== false) {
+    const data = samples.slice(preambleChips);
+    for (let i = 0; i < bits.length; i++) {
+      const a = data[2 * i], b = data[2 * i + 1];
+      if (Number.isFinite(a) && Number.isFinite(b) && a !== b) bits[i] = a > b ? 1 : 0;
+    }
+  }
 
   let corrected = 0;
   if (fec) {
@@ -1877,46 +1899,49 @@ function binaryEntropy(p) {
 }
 
 // ---- src/cache/channel.js ------------------------------------------
-// The LIVE physical channel: a real cache/memory-bandwidth covert channel
-// between the main thread (receiver) and a Web Worker (sender), on this machine,
-// right now. No shared memory, no postMessage payload - only contention.
+// The LIVE physical channel: a real cache covert channel between two Web
+// Workers on this machine, right now. No shared memory, no postMessage payload
+// to the receiver - only contention for a shared cache.
 //
-// This is the best-effort path. Early feasibility runs on the author's machine
-// showed the contention SIGNAL is large and easy to detect (~10x), but that
-// turning it into reliably-decoded bits is bounded by two things:
+// Design, and why (see the article, Parts 7-8):
 //
-//   - the timer-quantum floor: a probe must do >~100us of work to rise above
-//     the coarse clock, so each reliable sample costs ~1ms+,
-//   - synchronisation drift: a probe's DURATION depends on the bit (~10x
-//     longer when evicted), so a receiver that schedules "next slot starts
-//     when this probe ends" drifts out of step within a few bits.
+//   * BOTH ends run in Workers. On Apple silicon the two core clusters have
+//     separate L2 caches, and the channel only works when sender and receiver
+//     share one. With the receiver on the page's main thread, macOS was seen to
+//     move it to the efficiency cores once the sender got busy, splitting the
+//     ends across clusters (no channel). Two Workers have equal priority and
+//     tend to be placed together; the main thread just coordinates.
 //
-// The design below addresses both: a fixed step-count probe sampled several
-// times inside a guard window of each chip and medianed, with every chip
-// boundary computed from ONE shared start instant on the wall clock
-// (Date.now()), so a slow probe cannot push later chips out of place.
+//   * The probe size ADAPTS to the chip. The receiver first runs a quick
+//     pointer-chase sweep on whatever core it landed on, the knee detector finds
+//     that core's cache edges, and each edge suggests a probe region that fits
+//     comfortably inside that level. A short pre-flight tries each candidate on
+//     the SAME pair of Workers (keeping their placement) and the best one is
+//     used. The sender's buffer is scaled to overflow the largest level found.
+//     So a 4 MB efficiency-core L2, a 16 MB performance-core L2 or a 32 MB
+//     desktop L3 each get a probe that fits, instead of one hard-coded 8 MB.
 //
-// Honesty note: that start instant is handed to the worker via postMessage,
-// i.e. synchronisation is agreed out-of-band. The payload never travels that
-// way, and the decoder sees only latency samples - but a channel between
-// genuinely isolated parties would need in-band clock/frame recovery, which
-// this demo does not implement. Whether it
-// decodes cleanly depends on the machine and its background load; the page
-// treats a live failure as part of the honest story and falls back to replay.
+//   * Sync is still out-of-band: both Workers are given one start instant and
+//     schedule every chip from it on the wall clock (Date.now()). The payload
+//     never travels that way and the decoder sees only latency samples, but a
+//     channel between genuinely isolated parties would need in-band frame
+//     recovery (native/channel.c does that).
 //
-// If SharedArrayBuffer + cross-origin isolation were available this could use a
-// nanosecond counting timer and go much faster - deliberately NOT required, so
-// the page stays a double-clickable file.
+// The coarse browser clock (100 us in Chrome without cross-origin isolation)
+// means every probe must run for many clock ticks; the probe's step count is
+// set from the measured idle latency so an idle probe lasts ~0.8 ms.
 
-// Worker source, as a string so the build can inline it (a blob Worker is
-// same-origin and works from file://; an external worker file would not).
+const MiB = 1024 * 1024;
+
+// ---- sender ---------------------------------------------------------------
+// '1' chip: stream a large buffer as hard as possible. '0' chip: idle.
 const SENDER_WORKER_SRC = `
   const MB = 1048576;
   let buf = null;
   function ensureBuf(mb){ if(!buf || buf.length < mb*MB){ buf = new Uint8Array(mb*MB);
     for(let i=0;i<buf.length;i+=4096) buf[i]=1; } }
-  // Tight, non-yielding thrash for ~ms milliseconds. A '1' chip. Must saturate
-  // the memory subsystem continuously - a bursty sender produces no signal.
+  // Tight, non-yielding thrash for ~ms milliseconds. Must saturate continuously
+  // - a bursty sender produces no signal.
   function thrash(ms){
     const step = 64; let acc = 0; const t0 = performance.now();
     while (performance.now() - t0 < ms){
@@ -1927,10 +1952,8 @@ const SENDER_WORKER_SRC = `
   self.onmessage = (e) => {
     const { chips, chipMs, startAt, bufMB } = e.data;
     ensureBuf(bufMB || 24);
-    // Warm-up thrash before the aligned frame: nudges the scheduler to place
-    // this worker on its own (performance) core and ramps the clock, so the
-    // first chips already see full contention instead of a cold start - the
-    // single biggest cause of a flat, undecodable first run.
+    // Short warm-up so caches/clocks settle before the aligned frame. (It does
+    // NOT control which cores the OS uses - that is out of a page's hands.)
     { const t0 = performance.now(); let a = 0;
       while (performance.now() - t0 < 25) { for (let i = 0; i < buf.length; i += 64) a ^= buf[i]; }
       if (a === 0.5) self.postMessage({ warm: a }); }
@@ -1941,119 +1964,178 @@ const SENDER_WORKER_SRC = `
       if (chips[k] === 1) acc ^= thrash(chipMs - 3);
       while (Date.now() < end) {}      // idle the rest / the whole '0' chip
     }
-    self.postMessage({ done:true, acc });
+    self.postMessage({ type: 'done', acc });
   };
 `;
 
-// Build the receiver's probe buffer: a single random cycle through cache-line-
-// sized slots, so probing is a dependent load chain the prefetcher cannot beat
-// (the same trick as chase.js). Returned as a closure over its own buffer.
-function makeProbe(regionBytes = 8 * 1024 * 1024, seed = 7) {
-  const STRIDE = 16; // 64B line / 4B element
-  const buf = new Int32Array(regionBytes / 4);
-  const n = buf.length / STRIDE;
-  const perm = new Int32Array(n);
-  for (let i = 0; i < n; i++) perm[i] = i;
-  let s = seed >>> 0;
-  const rnd = () => { s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff; return s / 0x80000000; };
-  for (let i = n - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
-  for (let i = 0; i < n; i++) buf[perm[i] * STRIDE] = perm[(i + 1) % n] * STRIDE;
-
-  // Fixed-work probe: a fixed step count, so each sample averages over the same
-  // number of dependent loads. Its duration still varies with contention; the
-  // caller keeps sync by using absolute chip boundaries, not probe end times.
-  return function probeNs(steps) {
-    let p = 0;
+// ---- receiver -------------------------------------------------------------
+// Owns one probe buffer laid out as a single random cycle of cache lines (a
+// dependent-load chain the prefetcher can't predict, as in chase.js).
+//   calibrate: quick sweep -> [{bytes, ns}] on whichever core this Worker is on
+//   prepare:   lay out the probe region, measure its idle latency, pick steps
+//   receive:   sample each chip (median of probes in a guard window)
+const RECEIVER_WORKER_SRC = `
+  const STRIDE = 16; // 64-byte line / 4-byte Int32 element
+  let rs = 7;
+  const rnd = () => { rs = (Math.imul(rs, 1103515245) + 12345) & 0x7fffffff; return rs / 0x80000000; };
+  let pool = null, p = 0;
+  function chain(bytes) {
+    const len = bytes / 4;
+    if (!pool || pool.length < len) pool = new Int32Array(len);
+    const n = len / STRIDE, perm = new Int32Array(n);
+    for (let i = 0; i < n; i++) perm[i] = i;
+    for (let i = n - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+    for (let i = 0; i < n; i++) pool[perm[i] * STRIDE] = perm[(i + 1) % n] * STRIDE;
+    p = 0;
+    return n;
+  }
+  function walk(steps) {
     const t0 = performance.now();
-    for (let i = 0; i < steps; i++) p = buf[p];
-    const t1 = performance.now();
-    if (p < 0) throw new Error('probe DCE guard');
-    return ((t1 - t0) * 1e6) / steps;
+    for (let i = 0; i < steps; i++) p = pool[p];
+    return ((performance.now() - t0) * 1e6) / steps;
+  }
+  // ns/access over a region timed for ~targetMs (many clock ticks).
+  function timed(targetMs) {
+    const est = walk(20000);
+    const steps = Math.max(20000, Math.min(5e6, Math.round((targetMs * 1e6) / Math.max(est, 0.3))));
+    return walk(steps);
+  }
+  self.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'calibrate') {
+      const points = [];
+      for (let k = 0; ; k++) {
+        const bytes = Math.round(m.minBytes * Math.pow(2, k / m.perOctave) / 65536) * 65536;
+        if (bytes > m.maxBytes) break;
+        if (points.length && points[points.length - 1].bytes === bytes) continue;
+        const n = chain(bytes);
+        walk(Math.min(n * 2, 2e6));                              // warm
+        const a = timed(m.targetMs), b = timed(m.targetMs);
+        points.push({ bytes, ns: Math.min(a, b) });              // min: least-interrupted run
+      }
+      self.postMessage({ type: 'calibrated', points });
+    } else if (m.type === 'prepare') {
+      const n = chain(m.regionBytes);
+      walk(Math.min(n * 3, 3e6));
+      const idleNs = timed(4);
+      const probeSteps = Math.max(5000, Math.min(400000, Math.round((m.targetProbeMs * 1e6) / idleNs)));
+      self.postMessage({ type: 'prepared', idleNs, probeSteps });
+    } else if (m.type === 'receive') {
+      const { nChips, chipMs, startAt, probeSteps } = m;
+      while (Date.now() < startAt) {}
+      const samples = new Array(nChips), reads = new Array(nChips);
+      for (let k = 0; k < nChips; k++) {
+        const a = startAt + k * chipMs + chipMs * 0.25, b = startAt + (k + 1) * chipMs - chipMs * 0.1;
+        const r = [];
+        while (Date.now() < b) { if (Date.now() >= a) r.push(walk(probeSteps)); }
+        r.sort((x, y) => x - y);
+        samples[k] = r.length ? r[r.length >> 1] : NaN;
+        reads[k] = r.length;
+      }
+      if (p < 0) throw new Error('unreachable');
+      self.postMessage({ type: 'samples', samples, reads });
+    }
   };
-}
-
-// Check the environment can host the live path at all.
+`;
 function liveSupported() {
   return typeof Worker !== 'undefined' && typeof Blob !== 'undefined' && typeof URL?.createObjectURL === 'function';
 }
 
-// Transmit an already-encoded chip sequence live and return the per-chip latency
-// samples the receiver observed. Async; resolves when the frame completes.
-//
-// params: { chipMs, probeSteps, regionBytes, bufMB, onChip }
-async function transmitLive(chips, params = {}) {
-  const {
-    chipMs = 40,
-    probeSteps = 60000,
-    regionBytes = 8 * 1024 * 1024,
-    bufMB = 24,
-    onChip = null,
-  } = params;
+// ---- adaptive plan (pure; unit-tested) ------------------------------------
+// From a calibration sweep, propose probe sizes and a sender buffer size.
+// L1-sized edges are skipped: L1 is private to a core, never the shared level.
+function planFromCalibration(points, opts = {}) {
+  const { minProbe = 512 * 1024, maxProbe = 48 * MiB, fill = 0.85, innerFill = 0.6, maxCandidates = 4 } = opts;
+  const det = detectKnees(points);
+  const caps = [...new Set([...det.rawKnees, ...det.knees].map((k) => k.capacityBytes))]
+    .filter((c) => c >= minProbe)
+    .sort((a, b) => a - b);
 
-  if (!liveSupported()) throw new Error('live channel unsupported in this context');
+  const round64k = (b) => Math.max(65536, Math.round(b / 65536) * 65536);
+  const clamp = (b) => Math.min(maxProbe, Math.max(minProbe, round64k(b)));
+  // A probe that nearly fills a shared level (85%) is evicted by almost any
+  // sender traffic - measured best on Apple's 4 MB efficiency-core L2 (3.4 MB
+  // beat 2.4 MB). One roomier probe (60%) of the smallest level is kept too,
+  // in case the level is shared with other activity.
+  let probes = caps.map((c) => clamp(c * fill));
+  if (caps.length) probes.unshift(clamp(caps[0] * innerFill));
+  probes = [...new Set(probes)].sort((a, b) => a - b);
+  if (probes.length > maxCandidates) probes = [probes[0], ...probes.slice(-(maxCandidates - 1))];
+  // Nothing detected (flat or noisy sweep): fall back to sizes that fit common
+  // shared levels - a 4 MB cluster L2 and a 16 MB L2 / desktop L3.
+  const fallback = probes.length === 0;
+  if (fallback) probes = [3 * MiB, 8 * MiB];
 
-  const probeNs = makeProbe(regionBytes);
-  for (let i = 0; i < 6; i++) probeNs(probeSteps); // JIT + cache warmup
-
-  const url = URL.createObjectURL(new Blob([SENDER_WORKER_SRC], { type: 'application/javascript' }));
-  const worker = new Worker(url);
-
-  try {
-    const startAt = Date.now() + 320; // lead for alloc + sender warm-up + both ends ready
-    worker.postMessage({ chips, chipMs, startAt, bufMB });
-
-    while (Date.now() < startAt) { /* spin to the shared start */ }
-
-    const samples = new Array(chips.length);
-    for (let k = 0; k < chips.length; k++) {
-      const winStart = startAt + k * chipMs + chipMs * 0.25;
-      const winEnd = startAt + (k + 1) * chipMs - chipMs * 0.1;
-      const reads = [];
-      while (Date.now() < winEnd) {
-        if (Date.now() >= winStart) reads.push(probeNs(probeSteps));
-      }
-      reads.sort((a, b) => a - b);
-      const median = reads.length ? reads[reads.length >> 1] : NaN;
-      samples[k] = median;
-      if (onChip) onChip(k, median, reads.length);
-      // yield to the event loop occasionally so the UI can paint
-      if (k % 4 === 3) await new Promise((r) => setTimeout(r, 0));
-    }
-
-    return { samples, chipMs, rawBitrate: 1000 / (chipMs * 2) };
-  } finally {
-    worker.terminate();
-    URL.revokeObjectURL(url);
-  }
+  const largest = caps.length ? caps[caps.length - 1] : 16 * MiB;
+  const senderBufMB = Math.min(96, Math.max(24, Math.ceil((3 * largest) / MiB)));
+  return { edges: caps, probes, senderBufMB, fallback, range: det.range };
 }
 
-// Pre-flight: transmit a short raw alternating 1,0,1,0… pattern and measure the
-// hi/lo separation the receiver sees, WITHOUT committing to a full multi-second
-// frame. A dead channel (both ends on one core, machine busy) shows ~1× here and
-// can be rejected in ~1s, instead of after a 16s transmit. Same hi/lo convention
-// as manchester.calibrate(): even chip index = 1 (high/occupied), odd = 0 (low).
-async function probeChannel(params = {}) {
-  const {
-    chipMs = 40,
-    probeSteps = 60000,
-    regionBytes = 8 * 1024 * 1024,
-    bufMB = 24,
-    pairs = 8, // 16 chips ≈ 0.6s of transmit + lead
-  } = params;
+// Minimum pre-flight separation to attempt a live transmission. Differential
+// Manchester decoding tolerates less than the old 2x bar; the checksum still
+// rejects a bad decode.
+const MIN_SEPARATION = 1.6;
 
-  if (!liveSupported()) throw new Error('live channel unsupported in this context');
-
-  const chips = [];
-  for (let i = 0; i < pairs; i++) chips.push(1, 0);
-
-  const { samples } = await transmitLive(chips, { chipMs, probeSteps, regionBytes, bufMB });
-
-  const highs = [], lows = [];
-  for (let i = 0; i < samples.length; i++) (i % 2 === 0 ? highs : lows).push(samples[i]);
+// Separation of a raw alternating 1,0,1,0 pre-flight: mean(high) / mean(low).
+function preflightSeparation(samples) {
+  const hi = [], lo = [];
+  samples.forEach((v, i) => { if (Number.isFinite(v)) (i % 2 === 0 ? hi : lo).push(v); });
   const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
-  const high = mean(highs), low = mean(lows);
-  const separation = low > 0 ? high / low : 0;
-  return { separation, high, low, samples };
+  const h = mean(hi), l = mean(lo);
+  return { separation: l > 0 ? h / l : 0, high: h, low: l };
+}
+
+// ---- the session ----------------------------------------------------------
+// One sender + one receiver Worker, kept for the whole run so that the
+// calibration, pre-flights and transmission all happen on the same placement.
+class LiveSession {
+  constructor() {
+    if (!liveSupported()) throw new Error('live channel unsupported in this context');
+    const mk = (src) => {
+      const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      return { url, w: new Worker(url) };
+    };
+    this.s = mk(SENDER_WORKER_SRC);
+    this.r = mk(RECEIVER_WORKER_SRC);
+  }
+
+  _ask(worker, msg, type) {
+    return new Promise((resolve, reject) => {
+      const onMsg = (e) => {
+        if (e.data && e.data.type === type) { worker.removeEventListener('message', onMsg); resolve(e.data); }
+      };
+      worker.addEventListener('message', onMsg);
+      worker.addEventListener('error', (e) => reject(new Error(e.message || 'worker error')), { once: true });
+      worker.postMessage(msg);
+    });
+  }
+
+  calibrate({ minBytes = 256 * 1024, maxBytes = 64 * MiB, perOctave = 2, targetMs = 4 } = {}) {
+    return this._ask(this.r.w, { type: 'calibrate', minBytes, maxBytes, perOctave, targetMs }, 'calibrated')
+      .then((d) => d.points);
+  }
+
+  // Transmit a chip sequence; returns the receiver's per-chip samples.
+  async transmit(chips, { chipMs = 40, regionBytes = 8 * MiB, bufMB = 24, probeMs = 0.8, leadMs = 350 } = {}) {
+    const prep = await this._ask(this.r.w, { type: 'prepare', regionBytes, targetProbeMs: probeMs }, 'prepared');
+    const startAt = Date.now() + leadMs;
+    const got = this._ask(this.r.w, { type: 'receive', nChips: chips.length, chipMs, startAt, probeSteps: prep.probeSteps }, 'samples');
+    const sent = this._ask(this.s.w, { chips, chipMs, startAt, bufMB }, 'done');
+    const [res] = await Promise.all([got, sent]);
+    return { samples: res.samples, reads: res.reads, idleNs: prep.idleNs, probeSteps: prep.probeSteps, regionBytes, bufMB, chipMs };
+  }
+
+  // ~1 s raw alternating pattern for one probe size.
+  async preflight(regionBytes, { chipMs = 40, bufMB = 24, pairs = 10 } = {}) {
+    const chips = [];
+    for (let i = 0; i < pairs; i++) chips.push(1, 0);
+    const r = await this.transmit(chips, { chipMs, regionBytes, bufMB });
+    return { ...r, ...preflightSeparation(r.samples) };
+  }
+
+  close() {
+    for (const x of [this.s, this.r]) { x.w.terminate(); URL.revokeObjectURL(x.url); }
+  }
 }
 
 // ---- src/cache/channel-ui.js ---------------------------------------
@@ -2186,6 +2268,7 @@ function initChannel() {
   let anim = null;
   let lastFrame = null; // { result, truthChips, revealed } — repainted on resize
   let lastTrace = null; // the most recent result, in the shared trace format
+  let liveDiag = null;  // calibration, pre-flights and attempts of the latest live run
 
   // ---- Save trace --------------------------------------------------------
   // Exports exactly what the page decoded from, in the same JSON shape as
@@ -2204,12 +2287,15 @@ function initChannel() {
         chip_ms: CHIP_MS,
         fec: els.fec.checked,
         ...(live
-          ? { probe_mb: 8, probe_steps: 60000, sender_buf_mb: 24 }
+          ? { probe_bytes: result.regionBytes, probe_steps: result.probeSteps, sender_buf_mb: result.bufMB, idle_ns: result.idleNs }
           : { model: { ...MODEL }, quality: Number(els.quality.value), coarsen_model: els.coarsen.checked, seed: 12345 }),
       },
       sync: live
-        ? 'out-of-band: shared start instant passed to the worker via postMessage'
+        ? 'out-of-band: one start instant passed to both Workers via postMessage'
         : 'n/a (simulation)',
+      // Everything the live path measured this run - kept even when it fell
+      // back to the simulation, because the failures are evidence too.
+      live_diagnostics: liveDiag,
       note: result.note || null,
       decoded: {
         text: result.text || '',
@@ -2289,22 +2375,25 @@ function initChannel() {
   }
 
   // Raw (pre-FEC) bit error probability across the WHOLE frame after the
-  // preamble: compare the Manchester bits the receiver thresholded against the
-  // bits that were sent. This is the crossover probability of the binary
+  // preamble: compare the bits the receiver decided (by comparing each chip
+  // pair, exactly as the decoder does) against the bits that were sent. This is the crossover probability of the binary
   // symmetric channel, which is what Shannon capacity is defined on. (Using the
   // decoded message's BER instead was wrong: a failed decode reads as 100%
   // "error", and 1 - H(1) = 1 reported FULL capacity for a dead channel.)
   function rawBitErrorProb(result, truthChips) {
-    if (!result.calibration || result.calibration.threshold == null || !truthChips) return null;
-    const th = result.calibration.threshold;
+    if (!truthChips) return null;
     const pre = PREAMBLE_PAIRS * 2;
-    const got = manchesterDecode(result.samples.slice(pre).map((v) => (v > th ? 1 : 0))).bits;
+    const data = result.samples.slice(pre);
     const want = manchesterDecode(truthChips.slice(pre)).bits;
-    const n = Math.min(got.length, want.length);
-    if (!n) return null;
-    let e = 0;
-    for (let i = 0; i < n; i++) if (got[i] !== want[i]) e++;
-    return e / n;
+    // Same decision the decoder makes: compare the two halves of each bit.
+    let e = 0, n = 0;
+    for (let i = 0; i < want.length; i++) {
+      const x = data[2 * i], y = data[2 * i + 1];
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      n++;
+      if ((x > y ? 1 : 0) !== want[i]) e++;
+    }
+    return n ? e / n : null;
   }
 
   function finalReadouts(result, truthChips) {
@@ -2378,14 +2467,18 @@ function initChannel() {
     present(result, chips);
   }
 
-  // Live transmission, made more consistent in two ways:
-  //   1. the sender warms up and the receiver re-rolls core placement on each
-  //      attempt, so a flat first run gets a second chance automatically;
-  //   2. if the preamble shows no usable contention (a dead channel this run),
-  //      it falls back to the simulated model and SAYS SO, rather than showing
-  //      undecodable noise as if it were a result.
+  // Live transmission, adapted to the chip it's running on:
+  //   1. open a session: sender + receiver Workers (main thread only coordinates)
+  //   2. the receiver measures ITS core's cache edges (quick pointer-chase sweep)
+  //   3. each edge suggests a probe size; a ~1 s pre-flight tries each on the
+  //      same Workers, and the best-separating size is used
+  //   4. transmit (up to 2 attempts); differential Manchester decode
+  // If no size separates (the OS put the two Workers on cores that don't share
+  // a cache), it falls back to the simulation and SAYS SO - and keeps every
+  // live measurement in the trace.
   async function runLive() {
     if (!liveSupported()) {
+      liveDiag = { error: 'unsupported' };
       runReplay('Live channel unsupported in this browser —');
       return;
     }
@@ -2395,64 +2488,81 @@ function initChannel() {
     els.run.disabled = true;
     if (els.save) els.save.disabled = true;
     setBadge('live');
-
-    const MAX_ATTEMPTS = 2;
-    let best = null, bestBer = Infinity;
+    const fmt = (b) => (b >= 1048576 ? (b / 1048576).toFixed(b >= 10 * 1048576 ? 0 : 1) + ' MB' : Math.round(b / 1024) + ' KB');
+    const diag = (liveDiag = { calibration: null, plan: null, preflights: [], attempts: [], chosen: null });
+    let session = null;
     try {
-      // Pre-flight: a ~1s preamble-only probe to see if there's a usable channel
-      // right now, so a dead channel falls back fast instead of after a full
-      // multi-second frame.
-      setStatus('Live: checking the channel — short pre-flight probe…');
-      const pre = await probeChannel({ chipMs: CHIP_MS });
-      if (pre.separation < 2.0) {
+      session = new LiveSession();
+
+      setStatus('Live: measuring this core’s caches (quick sweep)…');
+      const points = await session.calibrate();
+      const plan = planFromCalibration(points);
+      diag.calibration = points.map((p) => ({ bytes: p.bytes, ns: Math.round(p.ns * 100) / 100 }));
+      diag.plan = plan;
+
+      const edgeText = plan.fallback ? 'no clear edges' : 'edges near ' + plan.edges.map(fmt).join(', ');
+      let best = null;
+      for (const region of plan.probes) {
+        setStatus(`Live: ${edgeText} — pre-flight with a ${fmt(region)} probe…`);
+        const pf = await session.preflight(region, { chipMs: CHIP_MS, bufMB: plan.senderBufMB });
+        diag.preflights.push({ probe_bytes: region, separation: Math.round(pf.separation * 100) / 100, high_ns: pf.high, low_ns: pf.low, idle_ns: pf.idleNs, samples: pf.samples });
+        if (!best || pf.separation > best.separation) best = { region, separation: pf.separation };
+      }
+      const tried = diag.preflights.map((x) => `${fmt(x.probe_bytes)} ${x.separation.toFixed(1)}×`).join(', ');
+
+      if (!best || best.separation < MIN_SEPARATION) {
         els.liveNote.style.display = '';
-        runReplay(`Live channel too weak right now (${pre.separation.toFixed(1)}× pre-flight separation — usually core scheduling) —`);
+        runReplay(`Live channel too weak right now (pre-flights: ${tried}) — the two Workers likely landed on cores that don't share a cache —`);
         return;
       }
-      setStatus(`Live: channel looks good (${pre.separation.toFixed(1)}× separation) — transmitting…`);
+      diag.chosen = { probe_bytes: best.region, separation: best.separation, sender_buf_mb: plan.senderBufMB };
 
+      const MAX_ATTEMPTS = 2;
+      let bestRes = null, bestBer = Infinity;
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        setStatus(`Live: attempt ${attempt} of ${MAX_ATTEMPTS} — transmitting through real cache contention on this machine…`);
-        const { samples } = await transmitLive(chips, { chipMs: CHIP_MS });
-        const dec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
-        const rawDec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
+        setStatus(`Live: ${fmt(best.region)} probe (${best.separation.toFixed(1)}× pre-flight) — transmitting, attempt ${attempt} of ${MAX_ATTEMPTS}…`);
+        const tx = await session.transmit(chips, { chipMs: CHIP_MS, regionBytes: best.region, bufMB: plan.senderBufMB });
+        const dec = decodeSamples(tx.samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
+        const rawDec = decodeSamples(tx.samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
         const text = dec.ok ? dec.text : '';
         const ber = bitErrorRate(msg, text);
         const cand = {
-          samples, text,
+          samples: tx.samples, text,
           rawText: rawDec.ok ? rawDec.text : '',
           checksumOk: !!dec.checksumOk,
           calibration: dec.calibration,
           source: 'live',
+          regionBytes: tx.regionBytes, bufMB: tx.bufMB, probeSteps: tx.probeSteps, idleNs: tx.idleNs,
+          note: `Live (${fmt(best.region)} probe, chosen from pre-flights: ${tried}).`,
         };
-        if (ber < bestBer) { best = cand; bestBer = ber; }
-        if (cand.checksumOk && text === msg) break; // clean decode — no need to retry
+        diag.attempts.push({ text, checksum_ok: cand.checksumOk, separation: dec.calibration ? dec.calibration.separation : null });
+        if (ber < bestBer) { bestRes = cand; bestBer = ber; }
+        if (cand.checksumOk && text === msg) break; // clean decode - no need to retry
       }
 
-      const sep = best && best.calibration ? (best.calibration.separation || 0) : 0;
-      const clean = best && best.checksumOk && best.text === msg;
-
-      if (!clean && sep < 2.0) {
-        // No usable contention this run (flat scope, ~coin-flip): the OS likely
-        // kept both ends on one core. Fall back to the model, clearly labelled.
+      const sep = bestRes && bestRes.calibration ? (bestRes.calibration.separation || 0) : 0;
+      const clean = bestRes && bestRes.checksumOk && bestRes.text === msg;
+      if (!clean && sep < MIN_SEPARATION) {
         els.liveNote.style.display = '';
-        runReplay(`Live channel too weak right now (${sep.toFixed(1)}× preamble separation — usually core scheduling) —`);
+        runReplay(`Live transmission lost the channel (${sep.toFixed(1)}× preamble separation; pre-flights: ${tried}) —`);
       } else {
         if (!clean) els.liveNote.style.display = '';
         setBadge('live');
-        present(best, chips);
+        present(bestRes, chips);
       }
     } catch (e) {
+      diag.error = String(e && e.message || e);
       els.liveNote.style.display = '';
-      runReplay('Live channel failed (' + e.message + ') —');
+      runReplay('Live channel failed (' + diag.error + ') —');
     } finally {
+      if (session) session.close();
       els.run.disabled = false;
     }
   }
 
   function run() {
     if (els.mode.value === 'live') runLive();
-    else runReplay();
+    else { liveDiag = null; runReplay(); }
   }
 
   els.run.addEventListener('click', run);
@@ -2461,6 +2571,7 @@ function initChannel() {
   els.coarsen.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });
   els.quality.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });
   els.mode.addEventListener('change', () => {
+    liveDiag = null;
     els.liveNote.style.display = els.mode.value === 'live' ? '' : 'none';
   });
   // Repaint the last frame at the new width (rotation, window resize) so the

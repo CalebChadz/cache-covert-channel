@@ -128,6 +128,7 @@ export function initChannel() {
   let anim = null;
   let lastFrame = null; // { result, truthChips, revealed } — repainted on resize
   let lastTrace = null; // the most recent result, in the shared trace format
+  let liveDiag = null;  // calibration, pre-flights and attempts of the latest live run
 
   // ---- Save trace --------------------------------------------------------
   // Exports exactly what the page decoded from, in the same JSON shape as
@@ -146,12 +147,15 @@ export function initChannel() {
         chip_ms: CHIP_MS,
         fec: els.fec.checked,
         ...(live
-          ? { probe_mb: 8, probe_steps: 60000, sender_buf_mb: 24 }
+          ? { probe_bytes: result.regionBytes, probe_steps: result.probeSteps, sender_buf_mb: result.bufMB, idle_ns: result.idleNs }
           : { model: { ...MODEL }, quality: Number(els.quality.value), coarsen_model: els.coarsen.checked, seed: 12345 }),
       },
       sync: live
-        ? 'out-of-band: shared start instant passed to the worker via postMessage'
+        ? 'out-of-band: one start instant passed to both Workers via postMessage'
         : 'n/a (simulation)',
+      // Everything the live path measured this run - kept even when it fell
+      // back to the simulation, because the failures are evidence too.
+      live_diagnostics: liveDiag,
       note: result.note || null,
       decoded: {
         text: result.text || '',
@@ -231,22 +235,25 @@ export function initChannel() {
   }
 
   // Raw (pre-FEC) bit error probability across the WHOLE frame after the
-  // preamble: compare the Manchester bits the receiver thresholded against the
-  // bits that were sent. This is the crossover probability of the binary
+  // preamble: compare the bits the receiver decided (by comparing each chip
+  // pair, exactly as the decoder does) against the bits that were sent. This is the crossover probability of the binary
   // symmetric channel, which is what Shannon capacity is defined on. (Using the
   // decoded message's BER instead was wrong: a failed decode reads as 100%
   // "error", and 1 - H(1) = 1 reported FULL capacity for a dead channel.)
   function rawBitErrorProb(result, truthChips) {
-    if (!result.calibration || result.calibration.threshold == null || !truthChips) return null;
-    const th = result.calibration.threshold;
+    if (!truthChips) return null;
     const pre = PREAMBLE_PAIRS * 2;
-    const got = manchesterDecode(result.samples.slice(pre).map((v) => (v > th ? 1 : 0))).bits;
+    const data = result.samples.slice(pre);
     const want = manchesterDecode(truthChips.slice(pre)).bits;
-    const n = Math.min(got.length, want.length);
-    if (!n) return null;
-    let e = 0;
-    for (let i = 0; i < n; i++) if (got[i] !== want[i]) e++;
-    return e / n;
+    // Same decision the decoder makes: compare the two halves of each bit.
+    let e = 0, n = 0;
+    for (let i = 0; i < want.length; i++) {
+      const x = data[2 * i], y = data[2 * i + 1];
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      n++;
+      if ((x > y ? 1 : 0) !== want[i]) e++;
+    }
+    return n ? e / n : null;
   }
 
   function finalReadouts(result, truthChips) {
@@ -320,14 +327,18 @@ export function initChannel() {
     present(result, chips);
   }
 
-  // Live transmission, made more consistent in two ways:
-  //   1. the sender warms up and the receiver re-rolls core placement on each
-  //      attempt, so a flat first run gets a second chance automatically;
-  //   2. if the preamble shows no usable contention (a dead channel this run),
-  //      it falls back to the simulated model and SAYS SO, rather than showing
-  //      undecodable noise as if it were a result.
+  // Live transmission, adapted to the chip it's running on:
+  //   1. open a session: sender + receiver Workers (main thread only coordinates)
+  //   2. the receiver measures ITS core's cache edges (quick pointer-chase sweep)
+  //   3. each edge suggests a probe size; a ~1 s pre-flight tries each on the
+  //      same Workers, and the best-separating size is used
+  //   4. transmit (up to 2 attempts); differential Manchester decode
+  // If no size separates (the OS put the two Workers on cores that don't share
+  // a cache), it falls back to the simulation and SAYS SO - and keeps every
+  // live measurement in the trace.
   async function runLive() {
     if (!liveSupported()) {
+      liveDiag = { error: 'unsupported' };
       runReplay('Live channel unsupported in this browser —');
       return;
     }
@@ -337,64 +348,81 @@ export function initChannel() {
     els.run.disabled = true;
     if (els.save) els.save.disabled = true;
     setBadge('live');
-
-    const MAX_ATTEMPTS = 2;
-    let best = null, bestBer = Infinity;
+    const fmt = (b) => (b >= 1048576 ? (b / 1048576).toFixed(b >= 10 * 1048576 ? 0 : 1) + ' MB' : Math.round(b / 1024) + ' KB');
+    const diag = (liveDiag = { calibration: null, plan: null, preflights: [], attempts: [], chosen: null });
+    let session = null;
     try {
-      // Pre-flight: a ~1s preamble-only probe to see if there's a usable channel
-      // right now, so a dead channel falls back fast instead of after a full
-      // multi-second frame.
-      setStatus('Live: checking the channel — short pre-flight probe…');
-      const pre = await probeChannel({ chipMs: CHIP_MS });
-      if (pre.separation < 2.0) {
+      session = new LiveSession();
+
+      setStatus('Live: measuring this core’s caches (quick sweep)…');
+      const points = await session.calibrate();
+      const plan = planFromCalibration(points);
+      diag.calibration = points.map((p) => ({ bytes: p.bytes, ns: Math.round(p.ns * 100) / 100 }));
+      diag.plan = plan;
+
+      const edgeText = plan.fallback ? 'no clear edges' : 'edges near ' + plan.edges.map(fmt).join(', ');
+      let best = null;
+      for (const region of plan.probes) {
+        setStatus(`Live: ${edgeText} — pre-flight with a ${fmt(region)} probe…`);
+        const pf = await session.preflight(region, { chipMs: CHIP_MS, bufMB: plan.senderBufMB });
+        diag.preflights.push({ probe_bytes: region, separation: Math.round(pf.separation * 100) / 100, high_ns: pf.high, low_ns: pf.low, idle_ns: pf.idleNs, samples: pf.samples });
+        if (!best || pf.separation > best.separation) best = { region, separation: pf.separation };
+      }
+      const tried = diag.preflights.map((x) => `${fmt(x.probe_bytes)} ${x.separation.toFixed(1)}×`).join(', ');
+
+      if (!best || best.separation < MIN_SEPARATION) {
         els.liveNote.style.display = '';
-        runReplay(`Live channel too weak right now (${pre.separation.toFixed(1)}× pre-flight separation — usually core scheduling) —`);
+        runReplay(`Live channel too weak right now (pre-flights: ${tried}) — the two Workers likely landed on cores that don't share a cache —`);
         return;
       }
-      setStatus(`Live: channel looks good (${pre.separation.toFixed(1)}× separation) — transmitting…`);
+      diag.chosen = { probe_bytes: best.region, separation: best.separation, sender_buf_mb: plan.senderBufMB };
 
+      const MAX_ATTEMPTS = 2;
+      let bestRes = null, bestBer = Infinity;
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        setStatus(`Live: attempt ${attempt} of ${MAX_ATTEMPTS} — transmitting through real cache contention on this machine…`);
-        const { samples } = await transmitLive(chips, { chipMs: CHIP_MS });
-        const dec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
-        const rawDec = decodeSamples(samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
+        setStatus(`Live: ${fmt(best.region)} probe (${best.separation.toFixed(1)}× pre-flight) — transmitting, attempt ${attempt} of ${MAX_ATTEMPTS}…`);
+        const tx = await session.transmit(chips, { chipMs: CHIP_MS, regionBytes: best.region, bufMB: plan.senderBufMB });
+        const dec = decodeSamples(tx.samples, { preambleChips: PREAMBLE_PAIRS * 2, fec });
+        const rawDec = decodeSamples(tx.samples, { preambleChips: PREAMBLE_PAIRS * 2, fec: false });
         const text = dec.ok ? dec.text : '';
         const ber = bitErrorRate(msg, text);
         const cand = {
-          samples, text,
+          samples: tx.samples, text,
           rawText: rawDec.ok ? rawDec.text : '',
           checksumOk: !!dec.checksumOk,
           calibration: dec.calibration,
           source: 'live',
+          regionBytes: tx.regionBytes, bufMB: tx.bufMB, probeSteps: tx.probeSteps, idleNs: tx.idleNs,
+          note: `Live (${fmt(best.region)} probe, chosen from pre-flights: ${tried}).`,
         };
-        if (ber < bestBer) { best = cand; bestBer = ber; }
-        if (cand.checksumOk && text === msg) break; // clean decode — no need to retry
+        diag.attempts.push({ text, checksum_ok: cand.checksumOk, separation: dec.calibration ? dec.calibration.separation : null });
+        if (ber < bestBer) { bestRes = cand; bestBer = ber; }
+        if (cand.checksumOk && text === msg) break; // clean decode - no need to retry
       }
 
-      const sep = best && best.calibration ? (best.calibration.separation || 0) : 0;
-      const clean = best && best.checksumOk && best.text === msg;
-
-      if (!clean && sep < 2.0) {
-        // No usable contention this run (flat scope, ~coin-flip): the OS likely
-        // kept both ends on one core. Fall back to the model, clearly labelled.
+      const sep = bestRes && bestRes.calibration ? (bestRes.calibration.separation || 0) : 0;
+      const clean = bestRes && bestRes.checksumOk && bestRes.text === msg;
+      if (!clean && sep < MIN_SEPARATION) {
         els.liveNote.style.display = '';
-        runReplay(`Live channel too weak right now (${sep.toFixed(1)}× preamble separation — usually core scheduling) —`);
+        runReplay(`Live transmission lost the channel (${sep.toFixed(1)}× preamble separation; pre-flights: ${tried}) —`);
       } else {
         if (!clean) els.liveNote.style.display = '';
         setBadge('live');
-        present(best, chips);
+        present(bestRes, chips);
       }
     } catch (e) {
+      diag.error = String(e && e.message || e);
       els.liveNote.style.display = '';
-      runReplay('Live channel failed (' + e.message + ') —');
+      runReplay('Live channel failed (' + diag.error + ') —');
     } finally {
+      if (session) session.close();
       els.run.disabled = false;
     }
   }
 
   function run() {
     if (els.mode.value === 'live') runLive();
-    else runReplay();
+    else { liveDiag = null; runReplay(); }
   }
 
   els.run.addEventListener('click', run);
@@ -403,6 +431,7 @@ export function initChannel() {
   els.coarsen.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });
   els.quality.addEventListener('change', () => { if (els.mode.value === 'replay') runReplay(); });
   els.mode.addEventListener('change', () => {
+    liveDiag = null;
     els.liveNote.style.display = els.mode.value === 'live' ? '' : 'none';
   });
   // Repaint the last frame at the new width (rotation, window resize) so the

@@ -1,43 +1,48 @@
-// The LIVE physical channel: a real cache/memory-bandwidth covert channel
-// between the main thread (receiver) and a Web Worker (sender), on this machine,
-// right now. No shared memory, no postMessage payload - only contention.
+// The LIVE physical channel: a real cache covert channel between two Web
+// Workers on this machine, right now. No shared memory, no postMessage payload
+// to the receiver - only contention for a shared cache.
 //
-// This is the best-effort path. Early feasibility runs on the author's machine
-// showed the contention SIGNAL is large and easy to detect (~10x), but that
-// turning it into reliably-decoded bits is bounded by two things:
+// Design, and why (see the article, Parts 7-8):
 //
-//   - the timer-quantum floor: a probe must do >~100us of work to rise above
-//     the coarse clock, so each reliable sample costs ~1ms+,
-//   - synchronisation drift: a probe's DURATION depends on the bit (~10x
-//     longer when evicted), so a receiver that schedules "next slot starts
-//     when this probe ends" drifts out of step within a few bits.
+//   * BOTH ends run in Workers. On Apple silicon the two core clusters have
+//     separate L2 caches, and the channel only works when sender and receiver
+//     share one. With the receiver on the page's main thread, macOS was seen to
+//     move it to the efficiency cores once the sender got busy, splitting the
+//     ends across clusters (no channel). Two Workers have equal priority and
+//     tend to be placed together; the main thread just coordinates.
 //
-// The design below addresses both: a fixed step-count probe sampled several
-// times inside a guard window of each chip and medianed, with every chip
-// boundary computed from ONE shared start instant on the wall clock
-// (Date.now()), so a slow probe cannot push later chips out of place.
+//   * The probe size ADAPTS to the chip. The receiver first runs a quick
+//     pointer-chase sweep on whatever core it landed on, the knee detector finds
+//     that core's cache edges, and each edge suggests a probe region that fits
+//     comfortably inside that level. A short pre-flight tries each candidate on
+//     the SAME pair of Workers (keeping their placement) and the best one is
+//     used. The sender's buffer is scaled to overflow the largest level found.
+//     So a 4 MB efficiency-core L2, a 16 MB performance-core L2 or a 32 MB
+//     desktop L3 each get a probe that fits, instead of one hard-coded 8 MB.
 //
-// Honesty note: that start instant is handed to the worker via postMessage,
-// i.e. synchronisation is agreed out-of-band. The payload never travels that
-// way, and the decoder sees only latency samples - but a channel between
-// genuinely isolated parties would need in-band clock/frame recovery, which
-// this demo does not implement. Whether it
-// decodes cleanly depends on the machine and its background load; the page
-// treats a live failure as part of the honest story and falls back to replay.
+//   * Sync is still out-of-band: both Workers are given one start instant and
+//     schedule every chip from it on the wall clock (Date.now()). The payload
+//     never travels that way and the decoder sees only latency samples, but a
+//     channel between genuinely isolated parties would need in-band frame
+//     recovery (native/channel.c does that).
 //
-// If SharedArrayBuffer + cross-origin isolation were available this could use a
-// nanosecond counting timer and go much faster - deliberately NOT required, so
-// the page stays a double-clickable file.
+// The coarse browser clock (100 us in Chrome without cross-origin isolation)
+// means every probe must run for many clock ticks; the probe's step count is
+// set from the measured idle latency so an idle probe lasts ~0.8 ms.
 
-// Worker source, as a string so the build can inline it (a blob Worker is
-// same-origin and works from file://; an external worker file would not).
+import { detectKnees } from './detect.js';
+
+const MiB = 1024 * 1024;
+
+// ---- sender ---------------------------------------------------------------
+// '1' chip: stream a large buffer as hard as possible. '0' chip: idle.
 export const SENDER_WORKER_SRC = `
   const MB = 1048576;
   let buf = null;
   function ensureBuf(mb){ if(!buf || buf.length < mb*MB){ buf = new Uint8Array(mb*MB);
     for(let i=0;i<buf.length;i+=4096) buf[i]=1; } }
-  // Tight, non-yielding thrash for ~ms milliseconds. A '1' chip. Must saturate
-  // the memory subsystem continuously - a bursty sender produces no signal.
+  // Tight, non-yielding thrash for ~ms milliseconds. Must saturate continuously
+  // - a bursty sender produces no signal.
   function thrash(ms){
     const step = 64; let acc = 0; const t0 = performance.now();
     while (performance.now() - t0 < ms){
@@ -48,10 +53,8 @@ export const SENDER_WORKER_SRC = `
   self.onmessage = (e) => {
     const { chips, chipMs, startAt, bufMB } = e.data;
     ensureBuf(bufMB || 24);
-    // Warm-up thrash before the aligned frame: nudges the scheduler to place
-    // this worker on its own (performance) core and ramps the clock, so the
-    // first chips already see full contention instead of a cold start - the
-    // single biggest cause of a flat, undecodable first run.
+    // Short warm-up so caches/clocks settle before the aligned frame. (It does
+    // NOT control which cores the OS uses - that is out of a page's hands.)
     { const t0 = performance.now(); let a = 0;
       while (performance.now() - t0 < 25) { for (let i = 0; i < buf.length; i += 64) a ^= buf[i]; }
       if (a === 0.5) self.postMessage({ warm: a }); }
@@ -62,117 +65,177 @@ export const SENDER_WORKER_SRC = `
       if (chips[k] === 1) acc ^= thrash(chipMs - 3);
       while (Date.now() < end) {}      // idle the rest / the whole '0' chip
     }
-    self.postMessage({ done:true, acc });
+    self.postMessage({ type: 'done', acc });
   };
 `;
 
-// Build the receiver's probe buffer: a single random cycle through cache-line-
-// sized slots, so probing is a dependent load chain the prefetcher cannot beat
-// (the same trick as chase.js). Returned as a closure over its own buffer.
-export function makeProbe(regionBytes = 8 * 1024 * 1024, seed = 7) {
-  const STRIDE = 16; // 64B line / 4B element
-  const buf = new Int32Array(regionBytes / 4);
-  const n = buf.length / STRIDE;
-  const perm = new Int32Array(n);
-  for (let i = 0; i < n; i++) perm[i] = i;
-  let s = seed >>> 0;
-  const rnd = () => { s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff; return s / 0x80000000; };
-  for (let i = n - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
-  for (let i = 0; i < n; i++) buf[perm[i] * STRIDE] = perm[(i + 1) % n] * STRIDE;
-
-  // Fixed-work probe: a fixed step count, so each sample averages over the same
-  // number of dependent loads. Its duration still varies with contention; the
-  // caller keeps sync by using absolute chip boundaries, not probe end times.
-  return function probeNs(steps) {
-    let p = 0;
+// ---- receiver -------------------------------------------------------------
+// Owns one probe buffer laid out as a single random cycle of cache lines (a
+// dependent-load chain the prefetcher can't predict, as in chase.js).
+//   calibrate: quick sweep -> [{bytes, ns}] on whichever core this Worker is on
+//   prepare:   lay out the probe region, measure its idle latency, pick steps
+//   receive:   sample each chip (median of probes in a guard window)
+export const RECEIVER_WORKER_SRC = `
+  const STRIDE = 16; // 64-byte line / 4-byte Int32 element
+  let rs = 7;
+  const rnd = () => { rs = (Math.imul(rs, 1103515245) + 12345) & 0x7fffffff; return rs / 0x80000000; };
+  let pool = null, p = 0;
+  function chain(bytes) {
+    const len = bytes / 4;
+    if (!pool || pool.length < len) pool = new Int32Array(len);
+    const n = len / STRIDE, perm = new Int32Array(n);
+    for (let i = 0; i < n; i++) perm[i] = i;
+    for (let i = n - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+    for (let i = 0; i < n; i++) pool[perm[i] * STRIDE] = perm[(i + 1) % n] * STRIDE;
+    p = 0;
+    return n;
+  }
+  function walk(steps) {
     const t0 = performance.now();
-    for (let i = 0; i < steps; i++) p = buf[p];
-    const t1 = performance.now();
-    if (p < 0) throw new Error('probe DCE guard');
-    return ((t1 - t0) * 1e6) / steps;
+    for (let i = 0; i < steps; i++) p = pool[p];
+    return ((performance.now() - t0) * 1e6) / steps;
+  }
+  // ns/access over a region timed for ~targetMs (many clock ticks).
+  function timed(targetMs) {
+    const est = walk(20000);
+    const steps = Math.max(20000, Math.min(5e6, Math.round((targetMs * 1e6) / Math.max(est, 0.3))));
+    return walk(steps);
+  }
+  self.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'calibrate') {
+      const points = [];
+      for (let k = 0; ; k++) {
+        const bytes = Math.round(m.minBytes * Math.pow(2, k / m.perOctave) / 65536) * 65536;
+        if (bytes > m.maxBytes) break;
+        if (points.length && points[points.length - 1].bytes === bytes) continue;
+        const n = chain(bytes);
+        walk(Math.min(n * 2, 2e6));                              // warm
+        const a = timed(m.targetMs), b = timed(m.targetMs);
+        points.push({ bytes, ns: Math.min(a, b) });              // min: least-interrupted run
+      }
+      self.postMessage({ type: 'calibrated', points });
+    } else if (m.type === 'prepare') {
+      const n = chain(m.regionBytes);
+      walk(Math.min(n * 3, 3e6));
+      const idleNs = timed(4);
+      const probeSteps = Math.max(5000, Math.min(400000, Math.round((m.targetProbeMs * 1e6) / idleNs)));
+      self.postMessage({ type: 'prepared', idleNs, probeSteps });
+    } else if (m.type === 'receive') {
+      const { nChips, chipMs, startAt, probeSteps } = m;
+      while (Date.now() < startAt) {}
+      const samples = new Array(nChips), reads = new Array(nChips);
+      for (let k = 0; k < nChips; k++) {
+        const a = startAt + k * chipMs + chipMs * 0.25, b = startAt + (k + 1) * chipMs - chipMs * 0.1;
+        const r = [];
+        while (Date.now() < b) { if (Date.now() >= a) r.push(walk(probeSteps)); }
+        r.sort((x, y) => x - y);
+        samples[k] = r.length ? r[r.length >> 1] : NaN;
+        reads[k] = r.length;
+      }
+      if (p < 0) throw new Error('unreachable');
+      self.postMessage({ type: 'samples', samples, reads });
+    }
   };
-}
+`;
 
-// Check the environment can host the live path at all.
 export function liveSupported() {
   return typeof Worker !== 'undefined' && typeof Blob !== 'undefined' && typeof URL?.createObjectURL === 'function';
 }
 
-// Transmit an already-encoded chip sequence live and return the per-chip latency
-// samples the receiver observed. Async; resolves when the frame completes.
-//
-// params: { chipMs, probeSteps, regionBytes, bufMB, onChip }
-export async function transmitLive(chips, params = {}) {
-  const {
-    chipMs = 40,
-    probeSteps = 60000,
-    regionBytes = 8 * 1024 * 1024,
-    bufMB = 24,
-    onChip = null,
-  } = params;
+// ---- adaptive plan (pure; unit-tested) ------------------------------------
+// From a calibration sweep, propose probe sizes and a sender buffer size.
+// L1-sized edges are skipped: L1 is private to a core, never the shared level.
+export function planFromCalibration(points, opts = {}) {
+  const { minProbe = 512 * 1024, maxProbe = 48 * MiB, fill = 0.85, innerFill = 0.6, maxCandidates = 4 } = opts;
+  const det = detectKnees(points);
+  const caps = [...new Set([...det.rawKnees, ...det.knees].map((k) => k.capacityBytes))]
+    .filter((c) => c >= minProbe)
+    .sort((a, b) => a - b);
 
-  if (!liveSupported()) throw new Error('live channel unsupported in this context');
+  const round64k = (b) => Math.max(65536, Math.round(b / 65536) * 65536);
+  const clamp = (b) => Math.min(maxProbe, Math.max(minProbe, round64k(b)));
+  // A probe that nearly fills a shared level (85%) is evicted by almost any
+  // sender traffic - measured best on Apple's 4 MB efficiency-core L2 (3.4 MB
+  // beat 2.4 MB). One roomier probe (60%) of the smallest level is kept too,
+  // in case the level is shared with other activity.
+  let probes = caps.map((c) => clamp(c * fill));
+  if (caps.length) probes.unshift(clamp(caps[0] * innerFill));
+  probes = [...new Set(probes)].sort((a, b) => a - b);
+  if (probes.length > maxCandidates) probes = [probes[0], ...probes.slice(-(maxCandidates - 1))];
+  // Nothing detected (flat or noisy sweep): fall back to sizes that fit common
+  // shared levels - a 4 MB cluster L2 and a 16 MB L2 / desktop L3.
+  const fallback = probes.length === 0;
+  if (fallback) probes = [3 * MiB, 8 * MiB];
 
-  const probeNs = makeProbe(regionBytes);
-  for (let i = 0; i < 6; i++) probeNs(probeSteps); // JIT + cache warmup
-
-  const url = URL.createObjectURL(new Blob([SENDER_WORKER_SRC], { type: 'application/javascript' }));
-  const worker = new Worker(url);
-
-  try {
-    const startAt = Date.now() + 320; // lead for alloc + sender warm-up + both ends ready
-    worker.postMessage({ chips, chipMs, startAt, bufMB });
-
-    while (Date.now() < startAt) { /* spin to the shared start */ }
-
-    const samples = new Array(chips.length);
-    for (let k = 0; k < chips.length; k++) {
-      const winStart = startAt + k * chipMs + chipMs * 0.25;
-      const winEnd = startAt + (k + 1) * chipMs - chipMs * 0.1;
-      const reads = [];
-      while (Date.now() < winEnd) {
-        if (Date.now() >= winStart) reads.push(probeNs(probeSteps));
-      }
-      reads.sort((a, b) => a - b);
-      const median = reads.length ? reads[reads.length >> 1] : NaN;
-      samples[k] = median;
-      if (onChip) onChip(k, median, reads.length);
-      // yield to the event loop occasionally so the UI can paint
-      if (k % 4 === 3) await new Promise((r) => setTimeout(r, 0));
-    }
-
-    return { samples, chipMs, rawBitrate: 1000 / (chipMs * 2) };
-  } finally {
-    worker.terminate();
-    URL.revokeObjectURL(url);
-  }
+  const largest = caps.length ? caps[caps.length - 1] : 16 * MiB;
+  const senderBufMB = Math.min(96, Math.max(24, Math.ceil((3 * largest) / MiB)));
+  return { edges: caps, probes, senderBufMB, fallback, range: det.range };
 }
 
-// Pre-flight: transmit a short raw alternating 1,0,1,0… pattern and measure the
-// hi/lo separation the receiver sees, WITHOUT committing to a full multi-second
-// frame. A dead channel (both ends on one core, machine busy) shows ~1× here and
-// can be rejected in ~1s, instead of after a 16s transmit. Same hi/lo convention
-// as manchester.calibrate(): even chip index = 1 (high/occupied), odd = 0 (low).
-export async function probeChannel(params = {}) {
-  const {
-    chipMs = 40,
-    probeSteps = 60000,
-    regionBytes = 8 * 1024 * 1024,
-    bufMB = 24,
-    pairs = 8, // 16 chips ≈ 0.6s of transmit + lead
-  } = params;
+// Minimum pre-flight separation to attempt a live transmission. Differential
+// Manchester decoding tolerates less than the old 2x bar; the checksum still
+// rejects a bad decode.
+export const MIN_SEPARATION = 1.6;
 
-  if (!liveSupported()) throw new Error('live channel unsupported in this context');
-
-  const chips = [];
-  for (let i = 0; i < pairs; i++) chips.push(1, 0);
-
-  const { samples } = await transmitLive(chips, { chipMs, probeSteps, regionBytes, bufMB });
-
-  const highs = [], lows = [];
-  for (let i = 0; i < samples.length; i++) (i % 2 === 0 ? highs : lows).push(samples[i]);
+// Separation of a raw alternating 1,0,1,0 pre-flight: mean(high) / mean(low).
+export function preflightSeparation(samples) {
+  const hi = [], lo = [];
+  samples.forEach((v, i) => { if (Number.isFinite(v)) (i % 2 === 0 ? hi : lo).push(v); });
   const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
-  const high = mean(highs), low = mean(lows);
-  const separation = low > 0 ? high / low : 0;
-  return { separation, high, low, samples };
+  const h = mean(hi), l = mean(lo);
+  return { separation: l > 0 ? h / l : 0, high: h, low: l };
+}
+
+// ---- the session ----------------------------------------------------------
+// One sender + one receiver Worker, kept for the whole run so that the
+// calibration, pre-flights and transmission all happen on the same placement.
+export class LiveSession {
+  constructor() {
+    if (!liveSupported()) throw new Error('live channel unsupported in this context');
+    const mk = (src) => {
+      const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      return { url, w: new Worker(url) };
+    };
+    this.s = mk(SENDER_WORKER_SRC);
+    this.r = mk(RECEIVER_WORKER_SRC);
+  }
+
+  _ask(worker, msg, type) {
+    return new Promise((resolve, reject) => {
+      const onMsg = (e) => {
+        if (e.data && e.data.type === type) { worker.removeEventListener('message', onMsg); resolve(e.data); }
+      };
+      worker.addEventListener('message', onMsg);
+      worker.addEventListener('error', (e) => reject(new Error(e.message || 'worker error')), { once: true });
+      worker.postMessage(msg);
+    });
+  }
+
+  calibrate({ minBytes = 256 * 1024, maxBytes = 64 * MiB, perOctave = 2, targetMs = 4 } = {}) {
+    return this._ask(this.r.w, { type: 'calibrate', minBytes, maxBytes, perOctave, targetMs }, 'calibrated')
+      .then((d) => d.points);
+  }
+
+  // Transmit a chip sequence; returns the receiver's per-chip samples.
+  async transmit(chips, { chipMs = 40, regionBytes = 8 * MiB, bufMB = 24, probeMs = 0.8, leadMs = 350 } = {}) {
+    const prep = await this._ask(this.r.w, { type: 'prepare', regionBytes, targetProbeMs: probeMs }, 'prepared');
+    const startAt = Date.now() + leadMs;
+    const got = this._ask(this.r.w, { type: 'receive', nChips: chips.length, chipMs, startAt, probeSteps: prep.probeSteps }, 'samples');
+    const sent = this._ask(this.s.w, { chips, chipMs, startAt, bufMB }, 'done');
+    const [res] = await Promise.all([got, sent]);
+    return { samples: res.samples, reads: res.reads, idleNs: prep.idleNs, probeSteps: prep.probeSteps, regionBytes, bufMB, chipMs };
+  }
+
+  // ~1 s raw alternating pattern for one probe size.
+  async preflight(regionBytes, { chipMs = 40, bufMB = 24, pairs = 10 } = {}) {
+    const chips = [];
+    for (let i = 0; i < pairs; i++) chips.push(1, 0);
+    const r = await this.transmit(chips, { chipMs, regionBytes, bufMB });
+    return { ...r, ...preflightSeparation(r.samples) };
+  }
+
+  close() {
+    for (const x of [this.s, this.r]) { x.w.terminate(); URL.revokeObjectURL(x.url); }
+  }
 }

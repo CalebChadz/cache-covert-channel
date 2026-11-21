@@ -177,6 +177,9 @@ export function calibrate(preambleSamples) {
 
 // ---- full decode from a latency sample stream ------------------------------
 //
+// samples: one latency reading per chip, in order. opts.differential (default
+// true) decides bits by comparing each chip pair; false uses the threshold only.
+//
 // samples: one latency reading per chip, in order. Length should match the
 // encoded chip count when the clock is aligned (the live path guarantees this
 // by sampling on the shared cadence; the simulator produces it directly).
@@ -202,6 +205,19 @@ export function decodeSamples(samples, opts = {}) {
   const dataChips = chips.slice(preambleChips);
 
   let { bits, violations } = manchesterDecode(dataChips);
+
+  // Differential decisions (default): a Manchester bit is one busy and one idle
+  // chip, so compare the two halves directly instead of each against a single
+  // threshold. That survives the latency level drifting mid-frame (clock or
+  // core changes), which a fixed threshold does not. Violations are still
+  // counted from the thresholded chips; a missing sample falls back to them.
+  if (opts.differential !== false) {
+    const data = samples.slice(preambleChips);
+    for (let i = 0; i < bits.length; i++) {
+      const a = data[2 * i], b = data[2 * i + 1];
+      if (Number.isFinite(a) && Number.isFinite(b) && a !== b) bits[i] = a > b ? 1 : 0;
+    }
+  }
 
   let corrected = 0;
   if (fec) {
