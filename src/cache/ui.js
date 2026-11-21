@@ -28,6 +28,9 @@ function environmentReport() {
   };
 }
 
+// One clock tick expressed in ns/access, shown beside each live reading.
+function fmtRes(r) { return r >= 0.1 ? r.toFixed(2) : r >= 0.01 ? r.toFixed(3) : '<0.01'; }
+
 function fmtBytes(b) {
   if (b >= MB) return `${b / MB} MB`;
   if (b >= 1024) return `${b / 1024} KB`;
@@ -43,6 +46,7 @@ export function initCache() {
     env: $('env'), table: $('table'), originalSays: $('originalSays'),
   };
 
+  const env = environmentReport();
   let running = false;
   let cancelled = false;
   let current = [];
@@ -81,7 +85,7 @@ export function initCache() {
       const prev = i > 0 ? points[i - 1].ns : null;
       const ratio = prev ? (p.ns / prev) : null;
       return `<tr><td>${fmtBytes(p.bytes)}</td>` +
-             `<td class="num">${p.ns.toFixed(2)}</td>` +
+             `<td class="num">${p.ns.toFixed(2)}${p.resolutionNs ? ` <span class="res">±${fmtRes(p.resolutionNs)}</span>` : ''}</td>` +
              `<td class="num">${ratio ? ratio.toFixed(2) + '×' : '—'}</td></tr>`;
     }).join('');
     els.table.innerHTML =
@@ -189,14 +193,21 @@ export function initCache() {
 
     const sizes = windowSizes(minSize, Math.min(maxSize, alloc.bytes / 2));
 
+    // Make every timed run last ~50 clock ticks (and at least 10 ms), so the
+    // clock's rounding is ~2% whatever this browser's timer resolution is.
+    const quantumMs = env.timerQuantumMs || 1;
+    const targetMs = Math.max(10, 50 * quantumMs);
+    const opts = { sizes, repeats, targetMs, quantumMs };
     const gen = currentMode === 'linear'
-      ? sweepLinear({ bytes: new Uint8Array(alloc.buf.buffer), sizes, repeats })
-      : sweep({ buf: alloc.buf, sizes, repeats });
+      ? sweepLinear({ bytes: new Uint8Array(alloc.buf.buffer), ...opts })
+      : sweep({ buf: alloc.buf, ...opts });
 
     drive(gen, currentMode, (points) => {
       setBusy(false);
       renderSummary(points, currentMode);
-      setStatus(`Live run complete on this machine — ${points.length} windows measured.`, 'ok');
+      const worst = Math.max(...points.map((p) => (p.resolutionNs || 0) / p.ns));
+      setStatus(`Live run complete on this machine — ${points.length} windows measured; ` +
+        `each run lasted ≥ ${targetMs.toFixed(0)} ms, so clock rounding is under ${Math.max(1, Math.ceil(worst * 100))}% of a reading.`, 'ok');
     });
   }
 
@@ -217,8 +228,7 @@ export function initCache() {
     if (current.length) renderChart(current, currentMode);
   });
 
-  // Environment readout — measured, not assumed.
-  const env = environmentReport();
+  // Environment readout — measured, not assumed. (env is hoisted above.)
   els.env.innerHTML =
     '<table>' +
     `<tr><th>Page origin</th><td class="num">${env.protocol}</td></tr>` +

@@ -50,7 +50,7 @@ export function dynamicRange(points) {
 // purpose: a detector can invent a boundary the hardware does not have, and
 // the merge rule that prevents that can also hide a real one. The page shows
 // both lists rather than picking one silently.
-export function detectKnees(points, { minRatio = 1.4, minRange = 3 } = {}) {
+export function detectKnees(points, { minRatio = 1.4, minRange = 3, minTicks = 3 } = {}) {
   if (points.length < 3) {
     return { knees: [], rawKnees: [], merged: [], range: 1, confident: false };
   }
@@ -62,7 +62,15 @@ export function detectKnees(points, { minRatio = 1.4, minRange = 3 } = {}) {
     return { knees: [], rawKnees: [], merged: [], range, confident: false };
   }
 
-  const steps = stepRatios(points);
+  // A jump only counts if it's bigger than the clock can fake. When a point
+  // records its resolution (one clock tick, in ns/access), a step smaller than
+  // `minTicks` ticks could be pure rounding: 1 tick → 2 ticks reads as "2×".
+  const resolvable = (i) => {
+    const a = points[i - 1], b = points[i];
+    const res = Math.max(a.resolutionNs || 0, b.resolutionNs || 0);
+    return !res || (b.ns - a.ns) >= minTicks * res;
+  };
+  const steps = stepRatios(points).map((s, k) => (resolvable(k + 1) ? s : { ...s, ratio: Math.min(s.ratio, 1) }));
   const toKnee = (s) => ({
     capacityBytes: s.fromBytes,
     atBytes: s.toBytes,
@@ -136,9 +144,26 @@ export function describe(points, mode) {
         tone: 'err',
       };
     }
+    // Structure that only appears once the window is bigger than any on-chip
+    // cache is most likely the memory-bandwidth wall: prefetching hides
+    // latency, but it can't make DRAM deliver bytes any faster.
+    const firstAt = Math.min(...knees.map((k) => k.capacityBytes));
+    if (firstAt >= 8 * MB) {
+      return {
+        headline: `Flat up to ~${formatBytes(firstAt)}, then a gentle rise`,
+        detail:
+          `Below ~${formatBytes(firstAt)} the walk stays flat: prefetching and overlapping hide the latency. ` +
+          `Past that it no longer fits in on-chip cache and streams from main memory, which is most likely ` +
+          `limited by memory bandwidth, something no prefetcher can hide. Total spread ${range.toFixed(1)}x, ` +
+          `still far less than a pointer chase over the same sizes.`,
+        tone: 'warn',
+      };
+    }
     return {
       headline: 'Unexpected structure in the linear sweep',
-      detail: `Dynamic range ${range.toFixed(2)}x. This mode usually produces a flat line.`,
+      detail:
+        `Dynamic range ${range.toFixed(2)}x. This mode usually stays flat at small sizes, so a busy ` +
+        `machine is the likeliest cause. Try closing other tabs and running again.`,
       tone: 'warn',
     };
   }

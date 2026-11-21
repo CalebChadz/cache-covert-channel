@@ -1,0 +1,20 @@
+# cache-covert-channel native/chase.c
+# machine: Apple A18 Pro, Darwin 27.2.0
+# date: 2026-11-22
+# power: { "available": true, "source": "pmset", "power_source": "Battery Power", "charging": false, "level": 0.73, "status": "discharging" }
+# qos: e  repeats: 5  target_ms: 20  per_octave: 1
+mode,qos,window_bytes,ns_median,ns_min,ns_max,steps
+stream,e,16384,3.901,3.037,4.433,9866311
+stream,e,32768,2.653,2.118,4.594,4467227
+stream,e,65536,2.903,2.003,7.452,4524016
+stream,e,131072,4.994,3.750,18.664,11566376
+stream,e,262144,3.880,2.015,7.457,8080808
+stream,e,524288,3.201,2.271,4.732,13150973
+stream,e,1048576,2.418,1.774,8.502,11334013
+stream,e,2097152,2.952,2.292,28.279,11678832
+stream,e,4194304,2.872,2.461,4.143,7947072
+stream,e,8388608,3.358,2.310,12.987,6685274
+stream,e,16777216,4.661,3.170,6.010,3515185
+stream,e,33554432,7.343,4.267,53.704,6570841
+stream,e,67108864,4.515,3.548,21.720,309218
+stream,e,134217728,4.706,3.654,5.214,525049

@@ -146,6 +146,7 @@ a.next:hover .arr { transform: translateY(3px); }
 #table td, #table th { border-bottom: 1px solid var(--line); padding: 7px 12px 7px 0; }
 #table td.num, #env td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
 #table th:not(:first-child) { text-align: right; }
+#table .res { color: var(--muted); font-size: 11px; }
 #table { max-height: 360px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 0 0 14px; }
 .side { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px; align-items: start; }
 #originalSays { margin: 0; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
@@ -588,6 +589,33 @@ a.next:hover .arr { transform: translateY(3px); }
     on the one before, so the CPU starts many of them at once and waits for them
     all together. The waiting overlaps, and mostly disappears.</li>
   </ul>
+
+  <details class="more">
+    <summary>Ran it live and your naive curve isn't perfectly flat? <span class="hint">2 min</span></summary>
+    <div class="more-body">
+      <p>Good catch, I hit this too. There were two separate things going on.</p>
+      <p>
+        <strong>Wobbles at small sizes were the clock.</strong> Safari and
+        Firefox only tick <code>performance.now()</code> about once a
+        millisecond, and my old code timed each sample for just a couple of
+        ticks. So every reading landed on a multiple of 0.25 ns, and a "2× jump"
+        from 0.25 to 0.50 ns was literally one extra tick. The detector even
+        reported a fake 64 KB cache from it. Now every sample is stretched to
+        about 50 ticks, the table shows each reading's ± next to it, and the
+        detector ignores any jump smaller than a few ticks.
+      </p>
+      <p>
+        <strong>A rise past ~16–32 MB is real.</strong> Once the data stops
+        fitting in any cache on the chip, the walk has to stream it from main
+        memory, and memory can only deliver so many bytes per second.
+        Prefetching hides the <em>waiting</em>; it can't beat that speed limit.
+        My native C version (nanosecond clock, no rounding) sees it too: flat at
+        about 0.77 ns per line up to 16 MB, then roughly 0.9–1.4 ns from 32 to
+        128 MB. That's a gentle slope, nothing like the pointer chase climbing
+        about 80× over the same sizes.
+      </p>
+    </div>
+  </details>
 
   <h3>The fix: make every read wait for the last one</h3>
   <p>

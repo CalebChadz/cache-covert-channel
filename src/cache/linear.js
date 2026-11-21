@@ -15,6 +15,8 @@
 // (3 MB - 1 = 0x2FFFFF selects only 2 MB of addresses). effectiveWindow() makes
 // that measurable; the page only ever sweeps powers of two.
 
+import { stepsForTarget, resolutionNs } from './chase.js';
+
 export function isPowerOfTwo(n) {
   return n > 0 && (n & (n - 1)) === 0;
 }
@@ -45,10 +47,16 @@ export function measureLinear(bytes, windowBytes, steps) {
   return ((t1 - t0) * 1e6) / steps;
 }
 
-export function* sweepLinear({ bytes, sizes, repeats = 3, steps = 4_000_000 }) {
+// `targetMs` (optional): grow each window's step count until a run lasts that
+// long. At a fixed 4M steps a ~0.5 ns walk lasts 2 ms, which is two ticks of a
+// 1 ms clock, so every reading came out a multiple of 0.25 ns.
+export function* sweepLinear({ bytes, sizes, repeats = 3, steps: fixedSteps = 4_000_000, targetMs = 0, quantumMs = 0 }) {
   const results = [];
   for (const windowBytes of sizes) {
     const runs = [];
+    const steps = targetMs > 0
+      ? stepsForTarget((s) => measureLinear(bytes, windowBytes, s), { startSteps: fixedSteps, targetMs })
+      : fixedSteps;
     for (let r = 0; r < repeats; r++) {
       runs.push(measureLinear(bytes, windowBytes, steps));
       yield { phase: 'progress', bytes: windowBytes, run: r + 1, of: repeats };
@@ -60,7 +68,10 @@ export function* sweepLinear({ bytes, sizes, repeats = 3, steps = 4_000_000 }) {
       min: runs[0],
       max: runs[runs.length - 1],
       effective: effectiveWindow(windowBytes),
+      steps,
     };
+    const res = resolutionNs(quantumMs, steps);
+    if (res !== null) point.resolutionNs = res;
     results.push(point);
     yield { phase: 'window', point, results: results.slice() };
   }

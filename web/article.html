@@ -61,7 +61,7 @@
   <div class="tablewrap"><table style="min-width:600px">
     <tr><th>Claim</th><th>Evidence</th><th>Strength</th></tr>
     <tr><td>Timing a dependent-load chain with a coarse browser clock reveals the cache hierarchy</td><td>Captured sweep in <code>data/cache/fixtures.json</code> (79× range); live mode on your machine</td><td>Shipped · one machine</td></tr>
-    <tr><td>A linear-stride walk shows a flat line instead</td><td>Captured sweep, same machine and date (0.55–0.88 ns); native four-way test separates the causes</td><td>Shipped · causes measured natively (§6)</td></tr>
+    <tr><td>A linear-stride walk shows a flat line instead, across the cache sizes</td><td>Captured sweep, same machine and date (0.55–0.88 ns); native four-way test separates the causes; native stream sweep shows a gentle rise past 16 MB</td><td>Shipped · causes measured natively (§2, §6)</td></tr>
     <tr><td>Boundaries match the published cache sizes</td><td>Browser power-of-two sweep; native sweep at 4 points per octave on both core clusters</td><td>Shipped · L1 and L2 edges match on both clusters (§6)</td></tr>
     <tr><td>Two threads can pass a message through cache/memory contention</td><td>Browser live mode (my run decoded <code>cache</code> intact); <strong>Save trace</strong> now exports any run</td><td>Reported for the browser · see the native row below</td></tr>
     <tr><td>Two <em>separate processes</em> can, with no shared start time</td><td>Native <code>channel</code>: 100-run batch and example traces in <code>data/native/</code></td><td>Shipped · 39/40 clean runs on default scheduling (§6)</td></tr>
@@ -290,6 +290,40 @@ for (let i = 0; i &lt; steps; i++) {
     on-chip caches; the sweep never really tests DRAM. What the comparison
     <em>does</em> show cleanly is the first edge: between 128 and 256 KB the pointer
     chase jumps 5×, and the linear walk doesn't move at all.
+  </p>
+
+  <h3>Update: past 32 MB, and a clock-rounding bug</h3>
+  <p>
+    I later ran the naive walk live up to 64 MB in Safari, whose clock ticks
+    about once a millisecond, and it wasn't flat: 0.25–0.75 ns at small sizes,
+    then 1.0, 1.5 and 2.5 ns at 16, 32 and 64 MB. Two different things were
+    going on.
+  </p>
+  <ul>
+    <li><strong>The small-size wobble was clock rounding.</strong> Every
+    reading was a multiple of 0.25 ns, because the walk timed a fixed 4 million
+    accesses: 0.25 ns × 4M = 1 ms, exactly one tick. So at the small sizes each
+    sample spanned only 1–3 ticks, and the detector turned a one-tick step (0.25 → 0.50 ns)
+    into a "~64 KB" cache edge. Both live sweeps now grow their step count
+    until each run lasts about 50 clock ticks (at least 10 ms). Each reading
+    records its resolution, the table shows it as ±, and the detector ignores
+    a jump smaller than three ticks. There are regression tests built from
+    that run.</li>
+    <li><strong>The rise past 16 MB is real.</strong> Past the on-chip caches
+    the walk has to stream from DRAM, and prefetching can hide latency but not
+    bandwidth. The native <code>stream</code> pattern (plain loads, nanosecond
+    clock, P cores) shows the same shape: a flat 0.77 ns per line from 32 KB to
+    16 MB, then 0.86–1.15 ns at 32 MB, 0.97–1.36 ns at 64 MB and 1.0–1.27 ns at
+    128 MB across two runs (<code>data/native/stream-sweep-qos-p.csv</code>).
+    That's 1.3–1.8×, against the pointer chase's ~80×. The browser's rise was
+    bigger (3.3×). One untested guess: its loop does read-modify-write
+    (<code>&amp;= 1</code>), so dirty lines also have to be written back, which
+    roughly doubles the memory traffic.</li>
+  </ul>
+  <p>
+    So the fair statement is: the linear walk is flat across the cache sizes,
+    then rises gently once it reaches main memory. The original capture stopped
+    at 32 MB, which is why it never showed that.
   </p>
 
   <div class="callout warn">

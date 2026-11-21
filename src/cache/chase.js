@@ -81,6 +81,30 @@ export function stepsFor(windowBytes) {
   return 1_000_000;
 }
 
+// Grow the step count until one timed run lasts at least `targetMs`.
+//
+// A fixed step count is fine on a 5 µs clock and useless on a 1 ms one: 1M
+// one-nanosecond hops take ~1 ms, i.e. ONE tick of Safari/Firefox's clock, so
+// the reading can only be 0, 1 or 2 ticks and a "2× jump" is a single tick.
+// `measure(steps)` must return ns per access; elapsed time is ns × steps.
+export function stepsForTarget(measure, { startSteps = 100_000, targetMs = 10, maxSteps = 400_000_000 } = {}) {
+  let steps = startSteps;
+  for (let i = 0; i < 16; i++) {
+    const ms = (measure(steps) * steps) / 1e6;
+    if (ms >= targetMs || steps >= maxSteps) return steps;
+    // Overshoot a little; a reading of 0 (no tick yet) just means "much more".
+    const grow = ms > 0 ? (targetMs * 1.3) / ms : 10;
+    steps = Math.min(maxSteps, Math.ceil(steps * Math.min(10, Math.max(2, grow))));
+  }
+  return steps;
+}
+
+// How finely a run of `steps` accesses can resolve ns/access on a clock that
+// ticks every `quantumMs`. Null when the quantum is unknown.
+export function resolutionNs(quantumMs, steps) {
+  return quantumMs > 0 ? (quantumMs * 1e6) / steps : null;
+}
+
 // Powers of two from `minBytes` to `maxBytes` inclusive.
 export function windowSizes(minBytes, maxBytes) {
   const out = [];
@@ -107,7 +131,9 @@ export function allocate(maxBytes, floorBytes = 4 * 1024 * 1024) {
 
 // Run the sweep as a generator, yielding after every window so the caller can
 // paint between measurements and keep the page responsive.
-export function* sweep({ buf, sizes, repeats = 3, seed = 12345, warmup = true }) {
+// `targetMs` (optional) sizes each window's runs to last that long, so the
+// clock's rounding stays small; `quantumMs` records the resulting resolution.
+export function* sweep({ buf, sizes, repeats = 3, seed = 12345, warmup = true, targetMs = 0, quantumMs = 0 }) {
   if (warmup) {
     // Global JIT warmup before any measurement is recorded.
     const w = Math.min(1024 * 1024, sizes[sizes.length - 1]);
@@ -118,13 +144,18 @@ export function* sweep({ buf, sizes, repeats = 3, seed = 12345, warmup = true })
   const results = [];
   for (const bytes of sizes) {
     const runs = [];
+    const steps = targetMs > 0
+      ? stepsForTarget((s) => measureWindow(buf, bytes, s, seed), { startSteps: stepsFor(bytes), targetMs })
+      : stepsFor(bytes);
     for (let r = 0; r < repeats; r++) {
-      runs.push(measureWindow(buf, bytes, stepsFor(bytes), seed + r));
+      runs.push(measureWindow(buf, bytes, steps, seed + r));
       yield { phase: 'progress', bytes, run: r + 1, of: repeats };
     }
     runs.sort((a, b) => a - b);
     const median = runs[(runs.length - 1) >> 1];
-    const point = { bytes, ns: median, min: runs[0], max: runs[runs.length - 1] };
+    const point = { bytes, ns: median, min: runs[0], max: runs[runs.length - 1], steps };
+    const res = resolutionNs(quantumMs, steps);
+    if (res !== null) point.resolutionNs = res;
     results.push(point);
     yield { phase: 'window', point, results: results.slice() };
   }

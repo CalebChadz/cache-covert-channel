@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-import { buildChain, measureWindow, windowSizes, allocate, LINE_BYTES, stepsFor } from '../src/cache/chase.js';
+import { buildChain, measureWindow, windowSizes, allocate, LINE_BYTES, stepsFor, stepsForTarget, resolutionNs } from '../src/cache/chase.js';
 import { isPowerOfTwo, effectiveWindow } from '../src/cache/linear.js';
 import {
   stepRatios, dynamicRange, detectKnees, originalHeuristic, describe, formatBytes,
@@ -237,4 +237,29 @@ test('a live pointer-chase sweep resolves a cache hierarchy', { timeout: 60000 }
     points[points.length - 1].ns > points[0].ns,
     'the largest window should be slower than the smallest'
   );
+});
+
+// ---- clock-tick awareness (from a real Safari/Firefox-style run: 1 ms clock,
+// fixed 4M steps, so every reading was a multiple of 0.25 ns) ----
+
+const TICKY = [
+  [16, .5], [32, .5], [64, .25], [128, .5], [256, .75], [512, .75], [1024, .75],
+  [2048, .75], [4096, .75], [8192, .75], [16384, 1], [32768, 1.5], [65536, 2.5],
+].map(([kb, ns]) => ({ bytes: kb * 1024, ns, resolutionNs: 0.25 }));
+
+test('detector ignores jumps that are only a clock tick or two', () => {
+  const labels = detectKnees(TICKY).knees.map((k) => k.label);
+  assert.ok(!labels.includes('~64 KB'), `invented a 64 KB edge: ${labels}`);
+  // without resolution info the old behaviour is unchanged
+  const bare = TICKY.map(({ bytes, ns }) => ({ bytes, ns }));
+  assert.ok(detectKnees(bare).knees.map((k) => k.label).includes('~64 KB'));
+});
+
+test('stepsForTarget grows a run until it spans the target on a coarse clock', () => {
+  const trueNs = 0.6, quantumMs = 1;
+  // simulated 1 ms clock: elapsed time is floored to whole ticks
+  const measure = (steps) => (Math.floor((trueNs * steps) / 1e6 / quantumMs) * quantumMs * 1e6) / steps;
+  const steps = stepsForTarget(measure, { startSteps: 100_000, targetMs: 50 });
+  assert.ok((trueNs * steps) / 1e6 >= 50, `only ${(trueNs * steps) / 1e6} ms`);
+  assert.ok(resolutionNs(quantumMs, steps) <= trueNs * 0.03);
 });
