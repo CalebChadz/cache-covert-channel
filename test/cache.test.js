@@ -79,9 +79,9 @@ test('isPowerOfTwo', () => {
   assert.equal(isPowerOfTwo(3 * MB), false);
 });
 
-test('BUGS #2: a non-power-of-two window silently tests a smaller working set', () => {
-  // The heart of the defect. The original stepped 1 MB, 2 MB, 3 MB, ...
-  // and used `size - 1` as a bitmask, which is only valid for powers of two.
+test('a `size - 1` mask silently tests a smaller working set for non-power-of-two windows', () => {
+  // Why the sweeps only use power-of-two windows: `size - 1` is only a valid
+  // bitmask for powers of two.
   assert.equal(effectiveWindow(1 * MB), 1 * MB);
   assert.equal(effectiveWindow(2 * MB), 2 * MB);
   assert.equal(effectiveWindow(4 * MB), 4 * MB);
@@ -166,8 +166,9 @@ test('detectKnees refuses to invent a boundary in the flat linear run', () => {
   assert.ok(range < 3, `flat curve should have a small range, got ${range}`);
 });
 
-test('the 2020 heuristic reports a boundary from the flat curve anyway', () => {
-  // This is the point of keeping it: on data with no signal it still answers.
+test('the naive first-jump heuristic has no notion of a flat curve; detectKnees does', () => {
+  // detectKnees refuses to answer on a flat curve. The naive heuristic has no
+  // such guard - whether it fires depends only on noise in a given capture.
   const orig = originalHeuristic(fixtures.linear.points, 1.5);
   const better = detectKnees(fixtures.linear.points);
   assert.equal(better.confident, false);

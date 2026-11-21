@@ -9,10 +9,13 @@
 //
 // A "chip" is one half-bit-slot decision: 1 = the sender occupied its cache
 // region during that half-slot, 0 = it stayed idle. Manchester coding maps each
-// data bit to two chips with a guaranteed transition, so the receiver can
-// recover the clock from the signal itself rather than needing a shared one -
-// which is the whole reason it is used here (see COVERT-CHANNEL-SCOPING.md 2:
-// naive fixed slots drifted to BER 0.5).
+// data bit to two chips with a guaranteed transition. In principle that lets a
+// receiver recover the clock from the signal itself. THIS decoder does not do
+// clock recovery: chip alignment comes from the live path's shared start
+// instant (see channel.js). What Manchester buys here is (a) balance - every
+// bit is one high + one low chip, so one preamble-calibrated threshold stays
+// valid for the whole frame - and (b) error detection: [0,0] / [1,1] pairs are
+// impossible and are counted as violations.
 //
 // Frame on the wire (all chips):
 //
@@ -21,8 +24,9 @@
 //   preamble : PREAMBLE_PAIRS x [1,0]  - raw alternating chips, NOT Manchester.
 //              Used to (a) find chip phase and (b) calibrate the 0/1 threshold
 //              from real hi/lo samples.
-//   SFD      : start-of-frame delimiter, a fixed byte, Manchester-encoded, that
-//              the decoder locates to find where the framed data begins.
+//   SFD      : start-of-frame delimiter, a fixed byte, Manchester-encoded. The
+//              decoder checks it (sfdOk) at the expected position; it does not
+//              search for it, because alignment comes from the shared start.
 //   length   : 1 byte, number of payload bytes.
 //   payload  : the message bytes.
 //   checksum : 1 byte, sum of payload bytes mod 256, for error DETECTION.
@@ -154,8 +158,8 @@ export function encodeFrame(text, { fec = false } = {}) {
 
 // ---- threshold calibration -------------------------------------------------
 
-// The preamble is raw 1,0,1,0,... so the odd-indexed samples are "1" (occupied,
-// high latency) and even-indexed are "0" (idle, low). Average each group and put
+// The preamble is raw 1,0,1,0,... so the even-indexed samples are "1" (occupied,
+// high latency) and odd-indexed are "0" (idle, low). Average each group and put
 // the threshold at the midpoint. Returns nulls if the preamble shows no
 // separation (channel too noisy / sender absent).
 export function calibrate(preambleSamples) {

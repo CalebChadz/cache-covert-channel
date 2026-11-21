@@ -4,32 +4,55 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cache-covert-channel — talking through a CPU cache</title>
+<meta property="og:title" content="cache-covert-channel — talking through a CPU cache">
+<!--__HEAD__-->
 <style>/*__SHELL_CSS__*/
-.hero { padding: 40px 24px 10px; border-bottom: 1px solid var(--line); position: relative; overflow: hidden; }
-.hero h1 { margin: 0; font-size: 30px; letter-spacing: 0.01em; color: #eaf5fb; }
-.hero h1 .cur { color: var(--accent); text-shadow: var(--glow); animation: blink 1.1s step-end infinite; }
+.hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); }
+.hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+  background-image: linear-gradient(rgba(34,211,238,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 80% at 50% 0%, #000 30%, transparent 75%);
+          mask-image: radial-gradient(ellipse 70% 80% at 50% 0%, #000 30%, transparent 75%);
+}
+.hero-inner { position: relative; max-width: var(--maxw); margin: 0 auto; padding: clamp(48px, 9vw, 104px) var(--gutter) clamp(40px, 7vw, 72px); }
+.hero h1 {
+  margin: 0; font: 800 clamp(34px, 7vw, 68px)/1.04 var(--sans); letter-spacing: -0.04em; color: var(--text-hi); max-width: 14ch; text-wrap: balance;
+}
+.hero h1 .grad { background: linear-gradient(100deg, #22d3ee 10%, #7aa7ff 50%, #c04cff 90%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero h1 .cur { color: var(--accent); font-family: var(--mono); font-weight: 500; text-shadow: var(--glow); animation: blink 1.1s step-end infinite; }
 @keyframes blink { 50% { opacity: 0; } }
-.hero .tag-line { margin: 10px 0 0; color: var(--muted); font-size: 15px; max-width: 680px; }
+.hero .tag-line { margin: 22px 0 0; color: #a9b9cc; font-size: clamp(17px, 2vw, 20px); line-height: 1.6; max-width: 640px; text-wrap: pretty; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+@media (max-width: 480px) { .cta .btn { flex: 1 1 100%; } }
 </style>
 </head>
 <body>
 <!--__NAV__-->
 
-<div class="hero">
-  <h1>cache-covert-channel<span class="cur">_</span></h1>
-  <p class="tag-line">
-    Two cooperating contexts on one machine exchange a message with no shared
-    memory, no network, and no storage — only contention for the CPU cache. The
-    full arc: measure the cache hierarchy out of a clock, watch the naive attack
-    fail, weaponise the timing into a covert channel, then try to defend it.
-  </p>
-  <div class="chips">
-    <span class="chip"><b>cooperative</b> — both ends are my own code</span>
-    <span class="chip"><b>no victim</b> — reads no one's secrets</span>
-    <span class="chip"><b>decades-known</b> — a textbook primitive, not a 0-day</span>
-    <span class="chip"><b>no install</b> — one HTML file, runs from file://</span>
+<main id="main">
+<section class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow">Security research · CPU microarchitecture</span>
+    <h1>Talking through a <span class="grad">CPU cache</span><span class="cur">_</span></h1>
+    <p class="tag-line">
+      Two threads exchange a message without the payload touching shared memory,
+      the network or storage — only contention for the CPU cache.
+      Measure the cache hierarchy out of a clock, watch the naive attack fail,
+      weaponise the timing into a covert channel, then try to defend it.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="cache.html">Launch the live demo <span class="arr" aria-hidden="true">→</span></a>
+      <a class="btn" href="article.html">Read how it works</a>
+    </div>
+    <div class="chips">
+      <span class="chip"><b>cooperative</b> — both ends are my own code</span>
+      <span class="chip"><b>no victim</b> — reads no one's secrets</span>
+      <span class="chip"><b>decades-known</b> — a textbook primitive, not a 0-day</span>
+      <span class="chip"><b>no install</b> — one HTML file, runs from file://</span>
+    </div>
   </div>
-</div>
+</section>
 
 <div class="prose">
   <p class="lede">
@@ -42,7 +65,7 @@
 
   <div class="cards">
     <a class="card" href="cache.html">
-      <h3>Live demo</h3>
+      <h3>Live demo <span class="arr" aria-hidden="true">→</span></h3>
       <p>
         Measure your own cache hierarchy from a timer, then transmit a short
         message across the cache between the page and a Web Worker — bit by bit,
@@ -54,11 +77,11 @@
       </div>
     </a>
     <a class="card" href="article.html">
-      <h3>How it works</h3>
+      <h3>How it works <span class="arr" aria-hidden="true">→</span></h3>
       <p>
-        The long write-up: pointer chasing vs the hardware prefetcher, why timer
-        coarsening doesn't stop it, Manchester coding for self-clocking, and why a
-        cache channel survives process and site isolation.
+        The long write-up: pointer chasing vs the prefetcher, why a coarse clock
+        isn't enough to stop it, how the channel is framed and decoded — and a
+        claim-by-claim account of what the evidence does and doesn't show.
       </p>
       <div class="tags">
         <span class="tag">side channels</span><span class="tag">Manchester coding</span><span class="tag">Shannon capacity</span>
@@ -68,22 +91,25 @@
 
   <h2>Why this is topical</h2>
   <p>
-    In October 2026 OpenAI published a red-team result: two of its AI agents,
+    In October 2026 OpenAI described a red-team exercise in which AI agents,
     placed in separate microVMs on the same host with no network link and no
-    shared files, built a <strong>CPU cache covert channel</strong> and used it to
-    pass data — one agent evicting data from the cache, the other timing how long
-    it took to reload. That is the same primitive this repo demonstrates. The
-    difference is only the parties: there, two isolated agents; here, a page and
-    its worker. The lesson is identical — you can cut the network, restrict
-    syscalls and separate processes, and timing on a shared cache still leaks.
+    shared writable files, used a <strong>CPU cache covert channel</strong> to
+    pass data: one agent evicted data from the cache while the other timed how
+    long its reloads took
+    (<a href="https://www.tomshardware.com/tech-industry/artificial-intelligence/openais-isolated-red-team-ai-agents-built-a-hidden-cpu-cache-channel-to-talk-with-no-network-or-shared-files-exploited-cpu-cache-timing-to-bypass-microvm-sandboxes" target="_blank" rel="noopener">coverage</a>;
+    the agents were given attack objectives, and were often pointed at the
+    channel). That is the same primitive shown here, in a much easier setting:
+    here, a page and its own worker thread in one process. The lesson carries
+    over: cutting the network and separating processes doesn't stop timing on a
+    physically shared cache.
   </p>
 
   <h2>The four beats</h2>
   <ul>
     <li><strong>Measure.</strong> A timing attack recovers your CPU's cache sizes from nothing but <code>performance.now()</code> — a side channel, the same family as Spectre, Meltdown and Prime+Probe, here recovering only harmless cache sizes.</li>
-    <li><strong>Fail.</strong> The original 2020 version read a flat line: the hardware prefetcher — a performance feature with no security purpose — quietly hid the signal. The fix is a dependent load chain the prefetcher can't predict.</li>
+    <li><strong>Fail.</strong> The obvious linear walk reads a flat line: prefetching and overlapping independent loads — performance features with no security purpose — hide the signal. The fix is a dependent load chain that defeats both.</li>
     <li><strong>Weaponise.</strong> The same timing primitive becomes a covert channel. A sender hammers or rests a memory region per time slot; the receiver reads it back purely by timing its own probe.</li>
-    <li><strong>Defend.</strong> Timer coarsening, gated high-resolution timers and scheduler throttling <em>degrade</em> the channel — they don't close it, because you can't un-share a cache in software.</li>
+    <li><strong>Defend.</strong> Coarser timers, gated high-resolution timers and throttling make the channel slower and noisier rather than closing it, because you can't un-share a cache in software. (The demo's defence dial is a simulation of this, clearly labelled.)</li>
   </ul>
 
   <div class="callout">
@@ -98,19 +124,20 @@
 
   <h2>Run it</h2>
   <p>No dependencies, no <code>npm install</code>. Node 18+ only for the tests.</p>
-  <table>
+  <div class="tablewrap"><table>
     <tr><th>Build the pages</th><td class="num">node scripts/build.mjs</td></tr>
     <tr><th>Open the demo</th><td class="num">open dist/cache.html</td></tr>
     <tr><th>Run the tests</th><td class="num">node --test "test/*.test.js"</td></tr>
-  </table>
+  </table></div>
   <p>
     The codec — Manchester coding, framing, checksum, error correction — is pure
     and fully tested against a simulated noisy channel, so the decode logic is
-    verified without depending on real hardware contention. The live physical path
-    is verified to decode on real hardware (a short message at 12.5 b/s, 0%
-    bit-error rate on the author's machine) and stays best-effort elsewhere.
+    checked without depending on real hardware contention. The live path has
+    decoded a short message intact on the author's machine (12.5 b/s raw), is
+    not covered by automated tests, and stays best-effort elsewhere.
   </p>
 </div>
+</main>
 
 <!--__FOOTER__-->
 </body>

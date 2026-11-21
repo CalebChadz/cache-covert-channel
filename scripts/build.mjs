@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SHELL_CSS } from '../src/shell/css.js';
-import { navHtml, footerHtml } from '../src/shell/nav.js';
+import { navHtml, footerHtml, headHtml } from '../src/shell/nav.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
@@ -60,6 +60,7 @@ function bundleModules(paths) {
 
 function stamp(html, { id, code, data }) {
   return html
+    .replace('<!--__HEAD__-->', () => headHtml(id))
     .replace('/*__SHELL_CSS__*/', () => SHELL_CSS)
     .replace('<!--__NAV__-->', () => navHtml(id))
     .replace('<!--__FOOTER__-->', () => footerHtml())

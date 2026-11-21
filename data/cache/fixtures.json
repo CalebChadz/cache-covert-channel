@@ -20,10 +20,10 @@
     ]
   },
   "linear": {
-    "label": "Faithful 2020 algorithm — captured run",
+    "label": "Naive linear stride — captured run",
     "machine": "Chromium 148, macOS, 6 cores, non-isolated context",
     "captured": "2026-09-09",
-    "note": "The original's linear 64-byte stride. Flat across a 2000x range of working-set sizes: the prefetcher hides every miss.",
+    "note": "Linear 64-byte stride. Flat (0.55-0.88 ns) from 16 KB to 32 MB: prefetching and overlapping independent loads hide the miss latency.",
     "points": [
       { "bytes": 16384, "ns": 0.811, "min": 0.74, "max": 0.9 },
       { "bytes": 32768, "ns": 0.644, "min": 0.62, "max": 0.69 },

@@ -1,35 +1,19 @@
-// The 2020 algorithm, ported faithfully - including the reason it does not work.
+// The naive measurement: a linear 64-byte stride - the obvious first attempt,
+// and the one this project started from. Kept as a selectable mode so its flat
+// line can be shown next to the pointer-chase curve.
 //
-// From SideChannelAttack.java:
+//     mask = windowBytes - 1;
+//     for (i = 0; i < steps; i++) bytes[(i * 64) & mask] &= 1;
 //
-//     modu = testCacheSize - 1;
-//     startTime = System.nanoTime();
-//     for (i = 0; i < steps; i++) { arr[(i * 64) & modu] &= 1; }
-//     endTime = System.nanoTime();
+// Why it fails to show the hierarchy: a fixed-stride walk is the easiest
+// pattern there is for the hardware prefetcher, AND every iteration is
+// independent of the last, so an out-of-order core can keep many misses in
+// flight at once (memory-level parallelism). Both hide miss latency. This
+// experiment does not separate the two effects - see the article.
 //
-// This page ships it as a selectable mode so the flat line it produces can be
-// shown next to the pointer-chase curve. That contrast is the point: the
-// original was not defeated by any security control, it was defeated by a
-// performance optimisation.
-//
-// Three defects, all preserved here and all listed in BUGS.md:
-//
-//  #1  A 64-byte linear stride is the most predictable access pattern that
-//      exists. The hardware prefetcher streams the next lines in before they
-//      are asked for, so miss latency never appears in the measurement. The
-//      result is roughly constant from 16 KB to 32 MB - it measures sequential
-//      bandwidth, not cache capacity.
-//
-//  #2  `modu = testCacheSize - 1` is only a valid bitmask when testCacheSize is
-//      a power of two. The original steps 1 MB, 2 MB, 3 MB, 4 MB... so at 3 MB
-//      the mask is 0x2FFFFF, which selects a 2 MB working set, not 3 MB. Most
-//      of the windows it tested were not the size it thought.
-//
-//  #3  `i * 64` overflows a Java int once i exceeds ~33.5 million. With the
-//      README's recommended steps=512 (536,870,912 iterations) it overflows for
-//      94% of the loop. JavaScript numbers are doubles and do not overflow
-//      here, so this port is deliberately NOT bug-compatible on that point -
-//      it cannot be, and the difference is noted rather than emulated.
+// Also note `windowBytes - 1` is only a valid mask for power-of-two windows
+// (3 MB - 1 = 0x2FFFFF selects only 2 MB of addresses). effectiveWindow() makes
+// that measurable; the page only ever sweeps powers of two.
 
 export function isPowerOfTwo(n) {
   return n > 0 && (n & (n - 1)) === 0;

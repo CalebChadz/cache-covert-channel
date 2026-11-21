@@ -45,13 +45,13 @@ function drawScope(canvas, samples, truthChips, threshold, revealed) {
     ctx.strokeStyle = accent; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(padL, y(threshold)); ctx.lineTo(w - 8, y(threshold)); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = accent; ctx.font = '9px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = accent; ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.fillText('decision threshold', padL + 2, y(threshold) - 2);
   }
 
   // y axis labels
-  ctx.fillStyle = muted; ctx.font = '9px ui-sans-serif, system-ui, sans-serif';
+  ctx.fillStyle = muted; ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.fillText(Math.round(maxV) + ' ns', padL - 4, y(maxV));
   ctx.fillText('0', padL - 4, y(0));
@@ -125,6 +125,7 @@ export function initChannel() {
   const rawBitrate = 1000 / (CHIP_MS * 2); // Manchester halves the data rate
 
   let anim = null;
+  let lastFrame = null; // { result, truthChips, revealed } — repainted on resize
 
   function setStatus(msg, cls = '') { els.status.textContent = msg; els.status.className = 'status ' + cls; }
 
@@ -148,6 +149,7 @@ export function initChannel() {
     const cal = result.calibration;
 
     const paint = () => {
+      lastFrame = { result, truthChips, revealed };
       drawScope(els.scope, result.samples, truthChips, cal ? cal.threshold : null, revealed);
       drawOccupancy(els.occupancy, truthChips, revealed);
       // progressive text: decode only the chips revealed so far is complex;
@@ -166,21 +168,41 @@ export function initChannel() {
       if (revealed >= total) {
         clearInterval(anim); anim = null;
         els.decoded.textContent = result.text || '(nothing)';
-        finalReadouts(result);
+        finalReadouts(result, truthChips);
       }
     }, stepMs);
   }
 
-  function finalReadouts(result) {
+  // Raw (pre-FEC) bit error probability across the WHOLE frame after the
+  // preamble: compare the Manchester bits the receiver thresholded against the
+  // bits that were sent. This is the crossover probability of the binary
+  // symmetric channel, which is what Shannon capacity is defined on. (Using the
+  // decoded message's BER instead was wrong: a failed decode reads as 100%
+  // "error", and 1 - H(1) = 1 reported FULL capacity for a dead channel.)
+  function rawBitErrorProb(result, truthChips) {
+    if (!result.calibration || result.calibration.threshold == null || !truthChips) return null;
+    const th = result.calibration.threshold;
+    const pre = PREAMBLE_PAIRS * 2;
+    const got = manchesterDecode(result.samples.slice(pre).map((v) => (v > th ? 1 : 0))).bits;
+    const want = manchesterDecode(truthChips.slice(pre)).bits;
+    const n = Math.min(got.length, want.length);
+    if (!n) return null;
+    let e = 0;
+    for (let i = 0; i < n; i++) if (got[i] !== want[i]) e++;
+    return e / n;
+  }
+
+  function finalReadouts(result, truthChips) {
     const truth = els.message.value;
     const ber = bitErrorRate(truth, result.text || '');
+    const pRaw = rawBitErrorProb(result, truthChips);
     els.sent.textContent = truth;
     els.decodedRaw.textContent = result.rawText != null ? result.rawText : result.text;
     els.statBitrate.textContent = rawBitrate.toFixed(1) + ' b/s';
-    els.statBer.textContent = (ber * 100).toFixed(1) + '%';
-    els.statCapacity.textContent = channelCapacity(ber, rawBitrate).toFixed(1) + ' b/s';
+    els.statBer.textContent = result.text ? (ber * 100).toFixed(1) + '%' : 'no decode';
+    els.statCapacity.textContent = pRaw == null ? '0.0 b/s' : channelCapacity(pRaw, rawBitrate).toFixed(1) + ' b/s';
     els.statChecksum.textContent = result.checksumOk ? 'pass' : 'FAIL';
-    els.statChecksum.className = 'stat';
+    els.statChecksum.className = result.checksumOk ? 'pass' : 'fail';
     const live = result.source === 'live';
     const sep = result.calibration && result.calibration.separation ? result.calibration.separation : null;
     const pre = result.note ? result.note + ' ' : '';
@@ -320,8 +342,18 @@ export function initChannel() {
   els.mode.addEventListener('change', () => {
     els.liveNote.style.display = els.mode.value === 'live' ? '' : 'none';
   });
+  // Repaint the last frame at the new width (rotation, window resize) so the
+  // canvases never stay stretched or blurry. rAF-throttled.
+  let resizeQueued = false;
   window.addEventListener('resize', () => {
-    // cheap redraw of last state is skipped; a re-run is one click away.
+    if (resizeQueued || !lastFrame) return;
+    resizeQueued = true;
+    requestAnimationFrame(() => {
+      resizeQueued = false;
+      const { result, truthChips, revealed } = lastFrame;
+      drawScope(els.scope, result.samples, truthChips, result.calibration ? result.calibration.threshold : null, revealed);
+      drawOccupancy(els.occupancy, truthChips, revealed);
+    });
   });
 
   els.qualityOut.textContent = els.quality.value + '%';

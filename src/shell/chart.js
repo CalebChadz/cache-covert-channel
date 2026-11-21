@@ -1,8 +1,7 @@
 // Small canvas helpers shared by every demo page. No dependencies.
 //
 // Everything here is presentation only - no page's algorithm logic lives in
-// this file, the same separation binpack-vns keeps between src/vns.js and
-// src/ui.js.
+// this file.
 
 // Size a canvas to its CSS box at device pixel ratio, returning a context
 // already scaled so all drawing can use CSS pixel coordinates.
@@ -60,7 +59,7 @@ export function lineChart(canvas, series, opts = {}) {
   const muted = cssVar('--muted', '#59636e');
 
   // horizontal gridlines + y labels
-  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+  ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'right';
   const yTickCount = 4;
@@ -109,7 +108,7 @@ export function lineChart(canvas, series, opts = {}) {
       ctx.fillStyle = m.color || cssVar('--err', '#cf222e');
       ctx.textAlign = x > padL + plotW * 0.7 ? 'right' : 'left';
       ctx.textBaseline = 'top';
-      ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
       ctx.fillText(m.label, x + (x > padL + plotW * 0.7 ? -4 : 4), padT + 2);
     }
   }
@@ -141,7 +140,7 @@ export function lineChart(canvas, series, opts = {}) {
 
   // axis labels
   ctx.fillStyle = muted;
-  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+  ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
   if (opts.xLabel) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';

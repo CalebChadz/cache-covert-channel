@@ -3,38 +3,51 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cache-Size Side Channel</title>
+<title>Live demo — cache side channel &amp; covert channel</title>
+<meta property="og:title" content="Live demo — measure your CPU cache, then talk through it">
+<!--__HEAD__-->
 <style>/*__SHELL_CSS__*/
-#env table, #table table { border-collapse: collapse; font-size: 12px; width: 100%; }
-#env th, #table th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 10px 3px 0; white-space: nowrap; }
-#env td, #table td { padding: 3px 0; }
-#table td, #table th { border-bottom: 1px solid var(--line); padding: 3px 8px 3px 0; }
+#env table, #table table { border-collapse: collapse; font-size: 13px; width: 100%; }
+#env th, #table th { text-align: left; font-weight: 500; color: var(--muted); padding: 5px 10px 5px 0; }
+#env td, #table td { padding: 5px 0; }
+#env td.num { white-space: nowrap; color: var(--text-hi); }
+#table th { font: 600 10px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; background: var(--panel); }
+#table td, #table th { border-bottom: 1px solid var(--line); padding: 7px 12px 7px 0; }
 #table td.num, #env td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
-#table { max-height: 260px; overflow: auto; }
-.side { display: grid; grid-template-columns: 1fr 220px; gap: 16px; align-items: start; }
-@media (max-width: 900px) { .side { grid-template-columns: 1fr; } }
+#table th:not(:first-child) { text-align: right; }
+#table { max-height: 360px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 0 0 14px; }
+.side { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px; align-items: start; }
+#originalSays { margin: 0; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+#originalSays:empty { display: none; }
+@media (max-width: 900px) { .side { grid-template-columns: minmax(0, 1fr); } }
+.envlabel { display: block; font: 700 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
 
 /* covert-channel finale */
-#channel { border-top: 3px solid var(--accent); margin-top: 8px; }
-.ch-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 0; }
-.ch-panel { padding: 20px 24px; border-right: 1px solid var(--line); }
-.ch-stage { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.ch-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.ch-pane { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
-.ch-pane h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
-.ch-pane .big { font-family: var(--mono); font-size: 20px; min-height: 26px; word-break: break-all; }
-.ch-pane.recv .big { color: var(--accent); }
-#chLiveNote { border-left: 3px solid var(--warn); background: var(--panel); padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12px; }
+.section-break { max-width: var(--maxw); margin: 24px auto 0; padding: 0 var(--gutter); }
+.section-break hr { border: 0; height: 1px; margin: 0; background: linear-gradient(90deg, transparent, var(--accent) 20%, var(--accent2) 80%, transparent); opacity: .55; }
+#channel h1::before { content: "» "; }
+.ch-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.ch-pane { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.ch-pane h4 { margin: 0 0 8px; font: 600 10px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.ch-pane .big { font: 600 clamp(18px, 2.4vw, 24px)/1.3 var(--mono); min-height: 30px; overflow-wrap: anywhere; color: var(--text-hi); }
+.ch-pane.recv { border-color: rgba(34,211,238,0.35); }
+.ch-pane.recv .big { color: var(--accent); text-shadow: 0 0 14px rgba(34,211,238,0.35); }
+#chLiveNote { margin-top: 16px; border: 1px solid rgba(255,176,32,0.3); border-left: 3px solid var(--warn); background: rgba(255,176,32,0.06); padding: 12px 14px; border-radius: 10px; font-size: 13px; }
 .ch-raw { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-@media (max-width: 820px) { .ch-wrap { grid-template-columns: 1fr; } .ch-panel { border-right: 0; border-bottom: 1px solid var(--line); } }
+.panel-hint { font-size: 13px; color: var(--muted); margin: 0; }
+#chChecksum.pass { color: var(--ok); }
+#chChecksum.fail { color: var(--err); }
+@media (max-width: 480px) { .ch-panes { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
 <!--__NAV__-->
 
+<main id="main">
 <header class="page">
+  <span class="eyebrow">Part 1 · Measure</span>
   <h1>Cache-Size Side Channel</h1>
-  <p>COMPX304, 2020 · a timing attack that infers your CPU's cache hierarchy — and the story of why the original never worked</p>
+  <p>A timing measurement that infers your CPU's cache hierarchy from a deliberately coarse browser clock — and why the obvious version of it comes out flat</p>
 </header>
 
 <div class="wrap">
@@ -46,8 +59,8 @@
         <select id="mode">
           <option value="chase-replay" selected>Pointer chase — captured run</option>
           <option value="chase-live">Pointer chase — live on this machine</option>
-          <option value="linear-replay">2020 algorithm — captured run</option>
-          <option value="linear-live">2020 algorithm — live on this machine</option>
+          <option value="linear-replay">Naive linear stride — captured run</option>
+          <option value="linear-live">Naive linear stride — live on this machine</option>
         </select>
       </label>
       <label>
@@ -79,8 +92,8 @@
     </div>
 
     <div class="note">
-      <b style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted)">This browser, right now</b>
-      <div id="env" style="margin-top:8px"></div>
+      <span class="envlabel">This browser, right now</span>
+      <div id="env"></div>
     </div>
 
     <p class="note">
@@ -102,7 +115,7 @@
     <div class="status" id="verdict"></div>
     <div class="side">
       <div id="table"></div>
-      <p class="status" id="originalSays" style="font-size:12px"></p>
+      <p class="status" id="originalSays"></p>
     </div>
   </div>
 </div>
@@ -125,102 +138,68 @@
     are harmless. The technique is not.
   </p>
 
-  <h2>The original did not work</h2>
+  <h2>Why the obvious version is flat</h2>
   <p>
-    The 2020 program walked memory with a linear 64-byte stride — one cache line
-    at a time, straight through the window, wrapping at the end. Run it above and
-    the curve is <strong>flat</strong>: roughly the same nanoseconds per access
-    from 16 KB to 32 MB, across a 2000× range of working-set sizes.
+    The obvious way to walk memory is a linear 64-byte stride: one cache line at a
+    time, straight through the window, wrapping at the end. Pick "Naive linear
+    stride" above and the curve is <strong>flat</strong>, 0.55–0.88 ns per access
+    from 16 KB to 32 MB in the captured run.
   </p>
   <p>
-    The reason is not a security control. It is the hardware prefetcher. A linear
-    stride is the most predictable access pattern that exists, so the CPU
-    recognises it instantly and streams the next lines into cache before the
-    program asks for them. The misses still happen; their <em>latency</em> never
-    appears, because the data has already arrived. The program was measuring
-    sequential memory bandwidth, which is roughly constant, and its
-    "first 1.5× jump" detector was firing on scheduler noise. Whatever number it
-    printed in 2020 was not derived from the thing it claimed to measure.
+    Two hardware features hide the misses: the <strong>prefetcher</strong>, which
+    spots the fixed stride and fetches lines before they're asked for, and
+    <strong>memory-level parallelism</strong>, because each iteration is independent
+    so the core overlaps many misses at once. This demo doesn't separate the two.
+    The fix defeats both: a <strong>dependent load chain</strong>, where the
+    working set is one random cycle and each cache line holds the address of the
+    next. Load <em>N+1</em> can't start until load <em>N</em> returns, there's no
+    pattern to predict, and every access pays its full latency.
   </p>
   <p>
-    The fix is a <strong>dependent load chain</strong>. Lay the working set out
-    as a single random cycle, where the value at each cache line is the address
-    of the next one. Now load <em>N+1</em>'s address is unknown until load
-    <em>N</em> returns, the prefetcher has nothing to predict, and every access
-    pays its true latency. That is the pointer-chase mode, and it produces the
-    real hierarchy.
+    Read the boundaries as brackets. The sweep doubles the window each step, so
+    "~128 KB" means the level holds somewhere between 128 and 256 KB of working
+    set. And the "naive first-jump" detector shown beside the table is there as a
+    warning: it reports the window <em>after</em> the jump and has no noise floor.
   </p>
 
   <h2>What about timer coarsening?</h2>
   <p>
-    The standard browser defence against timing attacks is to blunt the clock.
-    <code>performance.now()</code> is quantised — to 100 µs in Chrome outside a
-    cross-origin-isolated context, and to 1 ms in Firefox and Safari — and
-    <code>SharedArrayBuffer</code>, which can be turned into a high-resolution
-    counting timer, is gated behind
-    <code>Cross-Origin-Opener-Policy</code> and
-    <code>Cross-Origin-Embedder-Policy</code> headers. The panel on the left
-    shows what this page actually has available; on a double-clicked local file
-    it will report no isolation and no <code>SharedArrayBuffer</code>.
+    Browsers blunt the clock on purpose. <code>performance.now()</code> is rounded
+    to 100 µs in Chrome outside a cross-origin-isolated page, and around 1 ms in
+    some other browsers. <code>SharedArrayBuffer</code>, which can be turned into a
+    much finer counter, needs special
+    <code>Cross-Origin-Opener-Policy</code> /
+    <code>Cross-Origin-Embedder-Policy</code> headers. The panel on the left shows
+    what this page actually has.
   </p>
   <div class="callout">
     <p>
-      <strong>And it does not stop this attack.</strong> Coarsening defeats
-      attempts to time a <em>single</em> memory access. This measurement never
-      does that — it times a loop of hundreds of thousands of dependent loads and
-      divides. The timed region lasts milliseconds, so a 100 µs quantum is a
-      rounding error, and even Firefox's 1 ms quantum leaves three orders of
-      magnitude of headroom.
+      <strong>It doesn't stop this measurement, but it isn't free.</strong> Each
+      sample times hundreds of thousands of dependent loads (milliseconds of work)
+      and divides, so the clock's rounding is a small error. The cost is
+      <em>time</em>: every sample must run long enough to swamp the rounding.
+      That barely matters for measuring cache sizes, but it's what caps the covert
+      channel's bitrate below. Recovering a single secret byte (Spectre-style)
+      requires resolving individual accesses, and that is what coarsening really
+      makes hard.
     </p>
   </div>
   <p>
-    So the live mode runs from a plain <code>file://</code> page with no server,
-    no headers and no <code>SharedArrayBuffer</code>. That is worth being precise
-    about rather than triumphant: cross-origin isolation is aimed at a sharper
-    class of attack than this one. Recovering cache sizes is coarse and harmless.
-    Recovering a secret <em>byte</em> via Spectre needs to resolve individual
-    accesses, and that is exactly what the mitigation makes hard.
+    For the full argument, the evidence and its limits, see
+    <a href="article.html">How it works</a>.
   </p>
-  <p>
-    The honest summary is that the defence I expected to be the obstacle was not
-    the obstacle at all, and the thing that actually defeated the original
-    measurement was a performance optimisation nobody put there for security
-    reasons. Working out which of the two was in the way required building it and
-    measuring, not reasoning about it.
-  </p>
-
-  <h2>Running it natively</h2>
-  <p>
-    The original Java and a smaller C variant are both still in the repository
-    and still run:
-  </p>
-  <table>
-    <tr><th>Java</th><td class="num">javac SideChannelAttack.java &amp;&amp; java SideChannelAttack 256 20 1</td></tr>
-    <tr><th>C</th><td class="num">cc -O2 main.c -o main &amp;&amp; ./main</td></tr>
-  </table>
-  <p>
-    Both inherit defect #1 and will produce the same flat result for the same
-    reason. They are kept as the artifact that started this, not as a working
-    tool.
-  </p>
-
-  <h2>Defects catalogued</h2>
-  <ul>
-    <li><strong>#1</strong> Linear stride is fully prefetchable — measures bandwidth, not capacity. <em>Fixed via pointer chase; the original is retained as a selectable mode.</em></li>
-    <li><strong>#2</strong> <code>modu = size - 1</code> is only a valid mask for powers of two, but the original stepped 1 MB, 2 MB, 3 MB… At 3 MB the mask <code>0x2FFFFF</code> selects a 2 MB working set. Most windows were not the size they claimed.</li>
-    <li><strong>#3</strong> <code>i * 64</code> overflows a Java <code>int</code> past i ≈ 33.5 million; with the recommended <code>steps=512</code> that is 94% of the loop. JavaScript numbers are doubles and do not overflow, so this port is deliberately not bug-compatible here.</li>
-    <li><strong>#4</strong> The detector takes the first 1.5× jump with no repetition and no noise floor, so it reports a boundary even from a flat curve. Replaced; the original is shown alongside for comparison.</li>
-  </ul>
 </div>
 
 <!-- ===================== COVERT CHANNEL FINALE ===================== -->
+<div class="section-break" aria-hidden="true"><hr></div>
 <header class="page" id="channel">
+  <span class="eyebrow">Part 2 · Weaponise &amp; defend</span>
   <h1>Finale — a cache covert channel</h1>
-  <p>The same timing primitive, put to work: two cooperating contexts talking with no shared memory, no network, no storage — only the cache</p>
+  <p>The same timing primitive, put to work: the page and a Web Worker pass a message through contention for the cache and memory system — no shared memory or network carries the payload</p>
 </header>
 
-<div class="ch-wrap">
-  <div class="ch-panel">
+<div class="wrap">
+  <div class="panel">
     <fieldset>
       <legend>Message</legend>
       <label>
@@ -230,36 +209,36 @@
       <label>
         <span>Mode</span>
         <select id="chMode">
-          <option value="replay" selected>Replay — simulated, always works</option>
+          <option value="replay" selected>Replay — simulation (illustrative)</option>
           <option value="live">Live — real contention (experimental)</option>
         </select>
       </label>
       <label class="inline">
         <input type="checkbox" id="chFec">
-        <span style="margin:0">Error-correcting code (repetition-3)</span>
+        <span>Error-correcting code (repetition-3)</span>
       </label>
     </fieldset>
 
     <fieldset>
-      <legend>Defence — the capacity dial</legend>
+      <legend>Defence dial (simulated)</legend>
       <label class="inline">
         <input type="checkbox" id="chCoarsen">
-        <span style="margin:0">Coarsen the receiver's timer</span>
+        <span>Coarsen the timer (model)</span>
       </label>
       <label>
         <span>Channel quality — <b id="chQualityOut">85%</b></span>
         <input type="range" id="chQuality" min="10" max="100" value="85" step="5">
       </label>
-      <p style="font-size:12px;color:var(--muted);margin:0">
-        These don't switch the channel off — they degrade it. Watch the error
-        rate climb and the capacity fall. A shared cache can't be un-shared in
-        software.
+      <p class="panel-hint">
+        These controls change the <em>simulation</em>, not your hardware. They
+        illustrate how noise raises the error rate and lowers capacity. They are
+        not measurements of a real defence.
       </p>
     </fieldset>
 
     <button id="chRun" class="primary">Transmit</button>
 
-    <div id="chLiveNote" style="margin-top:14px;display:none">
+    <div id="chLiveNote" style="display:none">
       Live mode is <strong>best-effort</strong>. Whether real bits decode depends
       on this machine and its background load; on a busy laptop it may not land
       clean bits at all. That's the honest state of the art for a coarse-timed
@@ -267,7 +246,7 @@
     </div>
   </div>
 
-  <div class="ch-stage">
+  <div class="stage">
     <div class="stats">
       <div class="stat"><b id="chBitrate">–</b><span>Raw bitrate</span></div>
       <div class="stat"><b id="chBer">–</b><span>Bit error rate</span></div>
@@ -307,82 +286,54 @@
 <div class="prose">
   <h2>What you're looking at</h2>
   <p>
-    Two cooperating contexts on this one machine — the page and a Web Worker —
-    with <strong>no shared variable, no network, no storage</strong> between them.
-    The only thing they share is the physical cache. The sender transmits a bit
-    by either hammering a big memory region (a <code>1</code>) or staying quiet (a
-    <code>0</code>) during a time slot. The receiver never sees that directly; it
-    just times how long its <em>own</em> memory probe takes. When the sender is
-    hammering, it evicts the receiver's data and the probe slows down. That
-    latency difference is the message.
+    Two threads of this page — the main thread (receiver) and a Web Worker
+    (sender) — pass a message without the payload going through shared memory,
+    the network or storage. To send a <code>1</code>, the sender streams through
+    a 24 MB buffer for a time slot; for a <code>0</code> it waits. The receiver
+    repeatedly times a pointer chase over its own 8 MB region. When the sender is
+    busy, the receiver's data gets pushed out of the shared cache and its probe
+    slows from ~9 ns to ~90 ns per access. That difference is the message.
   </p>
   <p>
-    This is a <strong>covert channel</strong> between parties who both want to
-    communicate — not an attack that reads a victim's secrets. Both ends are my
-    code, cooperating on purpose. Nothing crosses a trust boundary; there is no
-    victim and no secret. It is a demonstration of a primitive that has been in
-    the security literature for decades (Prime+Probe and its relatives), not a
-    discovery, and there is no vulnerability here to report.
+    It's a <strong>covert channel</strong> between two parties who both want to
+    talk, not an attack that reads anyone's secrets. Both ends are this page's
+    own code, and the technique has been in the security literature for decades.
   </p>
 
-  <h3>The two hard parts</h3>
-  <p>
-    <strong>Timing without a fine clock.</strong> The browser's clock is
-    deliberately coarse, but — exactly as with the measurement at the top of this
-    page — that doesn't matter, because each probe times a long loop, not a single
-    access. What <em>does</em> bite is that a probe over evicted memory takes far
-    longer than over resident memory, so a naïve fixed-slot scheme drifts out of
-    sync within a few bits. The fix is <strong>Manchester coding</strong>: every
-    bit is sent as a transition (a <code>1</code>-chip and a <code>0</code>-chip),
-    so the signal carries its own clock and the receiver re-locks on every bit. A
-    short preamble at the start lets it calibrate the fast/slow threshold from the
-    real channel before the message begins.
-  </p>
-  <p>
-    <strong>Honesty about live mode.</strong> In the feasibility study the raw
-    contention signal was enormous — a 10× latency swing, idle to saturated — so
-    <em>detecting</em> the sender is easy. Turning that into cleanly-decoded bits
-    live is genuine engineering and depends on the machine and its load. The
-    replay mode is a simulation calibrated to the measured hardware figures, so it
-    always demonstrates the full pipeline; live mode runs the real thing. On the
-    author's hardware the live path decoded a short message <strong>intact — 12.5
-    b/s, 0% bit-error rate, checksum pass</strong>, so it is verified to work, not
-    just theorised. Clean decode still depends on the machine and its background
-    load, so it stays labelled best-effort: on a busy laptop it may not land clean
-    bits.
-  </p>
-
-  <h3>The defence — a dial, not a switch</h3>
-  <p>
-    Here is the part that surprised me, and it corrects a common intuition. You
-    might expect <strong>site isolation</strong> — putting cross-origin pages in
-    separate processes — to kill this. It doesn't. Site isolation defends against
-    a different thing: one origin's code speculatively reading another's memory
-    <em>inside the same process</em> (Spectre). But the L2 and system-level caches
-    and the memory bus are <strong>physically shared across every core and
-    process</strong>. Two separate processes still contend for the same silicon,
-    so a contention channel like this one <strong>survives process and site
-    isolation</strong>.
-  </p>
-  <p>
-    What actually limits it are measures that degrade the <em>capacity</em>:
-    coarsening the timer, withholding the high-resolution <code>SharedArrayBuffer</code>
-    counter unless a page is cross-origin isolated, and throttling background
-    work. Toggle the timer coarsening or drag the quality slider above and watch
-    the error rate rise and the capacity fall — but never quite to zero without
-    also making the channel useless. That's the real lesson: you can't un-share a
-    cache in software, so the mitigations raise the cost and lower the bandwidth
-    rather than closing the channel outright. Defence in depth, not a padlock.
-  </p>
+  <h3>Being precise about what this shows</h3>
+  <ul>
+    <li><strong>Replay is a simulation.</strong> It's seeded and calibrated to
+    live measurements (~9 ns idle, ~90 ns busy), so it looks the same on every
+    machine. The badge always says which one you're seeing.</li>
+    <li><strong>Live is real, and best-effort.</strong> It runs a ~1 s pre-flight
+    check first. If the slow/fast gap is under 2× (common when the OS puts both
+    threads on the same core, or the machine is busy), it switches to the
+    simulation and says so. On the author's machine, live decoded
+    <code>cache</code> intact at a raw 12.5 b/s (about 6 b/s once framing
+    overhead is counted).</li>
+    <li><strong>Timing is agreed out-of-band.</strong> The page tells the worker
+    when to start through an ordinary message, and both sides keep time against
+    the wall clock from that instant. The payload never travels that way, but
+    genuinely isolated parties would have to recover timing from the signal.</li>
+    <li><strong>Manchester coding</strong> sends each bit as a transition
+    (occupy→idle or idle→occupy). Here it keeps one calibrated threshold valid
+    for the whole message and makes some errors detectable. Timing comes from the
+    shared start instant, not from clock recovery.</li>
+    <li><strong>Both threads share one process.</strong> The argument that such
+    channels survive process, site or VM isolation comes from published research
+    and how the hardware is built. This page doesn't demonstrate it.</li>
+  </ul>
 
   <h3>Reading the readouts</h3>
   <ul>
-    <li><strong>Raw bitrate</strong> — Manchester halves the data rate, so this is modest by design; a covert channel trades speed for stealth and reliability.</li>
-    <li><strong>Bit error rate</strong> — shown, not hidden. With the error-correcting code on, compare the receiver's clean output against the faint “raw decode” beneath the chart.</li>
-    <li><strong>Capacity</strong> — the Shannon limit for this error rate and bitrate: the honest information throughput once errors are accounted for. It collapses to zero as the error rate approaches a coin flip.</li>
-    <li><strong>Checksum</strong> — a whole-message integrity check, so a corrupted run is reported as corrupted rather than shown as if it were fine.</li>
+    <li><strong>Raw bitrate</strong> — 40 ms per chip, two chips per bit. Useful throughput is lower once the preamble, framing and (optional) error correction are counted.</li>
+    <li><strong>Bit error rate</strong> — of the decoded message against what was sent. Short messages make this a coarse estimate.</li>
+    <li><strong>Capacity</strong> — the Shannon limit, rate × (1 − H(p)), using the raw bit error rate across the whole frame. An upper bound, not something this codec achieves.</li>
+    <li><strong>Checksum</strong> — one byte, sum mod 256. It catches any single flipped message bit, but it's weak against multiple errors.</li>
   </ul>
 </div>
+
+</main>
 
 <!--__FOOTER__-->
 

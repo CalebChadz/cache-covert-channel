@@ -146,6 +146,23 @@ test('dropping contrast to zero destroys the channel', () => {
   assert.ok(!dec.ok || dec.text !== 'data');
 });
 
+test('a dead channel has ~zero capacity when estimated from raw bit errors', () => {
+  // Regression: capacity used to be computed from the DECODED message's BER, so
+  // a failed decode (100% "error") reported full capacity, since 1 - H(1) = 1.
+  // The page now uses the raw pre-FEC bit error probability over the frame.
+  const { chips } = encodeFrame('cache');
+  const samples = renderTrace(chips, { seed: 3, noise: 0.3, dropContrast: 1 });
+  const pre = PREAMBLE_PAIRS * 2;
+  const th = calibrate(samples.slice(0, pre)).threshold;
+  const got = manchesterDecode(samples.slice(pre).map((v) => (v > th ? 1 : 0))).bits;
+  const want = manchesterDecode(chips.slice(pre)).bits;
+  let e = 0;
+  for (let i = 0; i < want.length; i++) if (got[i] !== want[i]) e++;
+  const p = e / want.length;
+  assert.ok(p > 0.3 && p < 0.7, `no-signal channel should be near a coin flip, got ${p}`);
+  assert.ok(channelCapacity(p, 12.5) < 1.5, 'capacity of a no-signal channel must be near zero');
+});
+
 test('FEC recovers a message that raw decoding gets wrong', () => {
   const msg = 'Hi';
   // A noise level where raw fails often but FEC (3x redundancy) holds.

@@ -2,19 +2,26 @@
 // between the main thread (receiver) and a Web Worker (sender), on this machine,
 // right now. No shared memory, no postMessage payload - only contention.
 //
-// This is the best-effort path. The feasibility study
-// (COVERT-CHANNEL-SCOPING.md 1) established that the contention SIGNAL is huge
-// and trivially detectable (~10x), but that turning it into reliably-decoded
-// bits is genuine engineering bounded by two things measured there:
+// This is the best-effort path. Early feasibility runs on the author's machine
+// showed the contention SIGNAL is large and easy to detect (~10x), but that
+// turning it into reliably-decoded bits is bounded by two things:
 //
 //   - the timer-quantum floor: a probe must do >~100us of work to rise above
 //     the coarse clock, so each reliable sample costs ~1ms+,
-//   - synchronisation drift: a probe whose duration depends on the bit will
-//     overrun its slot and desync, so the probe MUST be constant-work.
+//   - synchronisation drift: a probe's DURATION depends on the bit (~10x
+//     longer when evicted), so a receiver that schedules "next slot starts
+//     when this probe ends" drifts out of step within a few bits.
 //
-// The design below addresses both: a fixed step-count probe (constant work
-// regardless of contention) sampled several times per chip and medianed, on
-// absolute Date.now() chip boundaries so error does not accumulate. Whether it
+// The design below addresses both: a fixed step-count probe sampled several
+// times inside a guard window of each chip and medianed, with every chip
+// boundary computed from ONE shared start instant on the wall clock
+// (Date.now()), so a slow probe cannot push later chips out of place.
+//
+// Honesty note: that start instant is handed to the worker via postMessage,
+// i.e. synchronisation is agreed out-of-band. The payload never travels that
+// way, and the decoder sees only latency samples - but a channel between
+// genuinely isolated parties would need in-band clock/frame recovery, which
+// this demo does not implement. Whether it
 // decodes cleanly depends on the machine and its background load; the page
 // treats a live failure as part of the honest story and falls back to replay.
 //
@@ -73,9 +80,9 @@ export function makeProbe(regionBytes = 8 * 1024 * 1024, seed = 7) {
   for (let i = n - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
   for (let i = 0; i < n; i++) buf[perm[i] * STRIDE] = perm[(i + 1) % n] * STRIDE;
 
-  // Constant-work probe: fixed step count so its DURATION does not depend on
-  // whether the region is currently evicted (that dependence is what wrecked
-  // synchronisation in the feasibility study).
+  // Fixed-work probe: a fixed step count, so each sample averages over the same
+  // number of dependent loads. Its duration still varies with contention; the
+  // caller keeps sync by using absolute chip boundaries, not probe end times.
   return function probeNs(steps) {
     let p = 0;
     const t0 = performance.now();

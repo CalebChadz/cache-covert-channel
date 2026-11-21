@@ -57,17 +57,20 @@ export function initCache() {
     if (!points.length) return;
     const xTicks = points.map((p) => ({ x: p.bytes, label: fmtBytes(p.bytes).replace(' ', '') }));
     const { knees } = detectKnees(points);
+    // Thin the x labels on narrow (phone) screens so they never collide.
+    const narrow = (els.chart.clientWidth || 600) < 560;
     lineChart(els.chart, [{
       points: points.map((p) => [p.bytes, p.ns]),
       color: mode === 'linear' ? getComputedStyle(document.documentElement).getPropertyValue('--warn').trim() || '#9a6700' : undefined,
       dots: true,
     }], {
       logX: true,
-      height: 280,
+      height: narrow ? 240 : 300,
+      padL: narrow ? 44 : 52,
       xLabel: 'working set size',
       yLabel: 'ns per access',
       yFormat: (v) => v.toFixed(v < 10 ? 1 : 0),
-      xTicks: xTicks.filter((_, i) => i % 2 === 0),
+      xTicks: xTicks.filter((_, i) => i % (narrow ? 4 : 2) === 0),
       marks: knees.map((k) => ({ x: k.atBytes, label: k.label })),
     });
   }
@@ -102,8 +105,8 @@ export function initCache() {
 
     const orig = originalHeuristic(points);
     els.originalSays.textContent = orig
-      ? `The 2020 heuristic (first 1.5× jump, no repetition, no noise floor) would report: ${fmtBytes(orig.reportedBytes)}.`
-      : 'The 2020 heuristic would report nothing — it never saw a 1.5× jump.';
+      ? `A naive first-jump detector (first 1.5× rise, no repeats, no noise floor) would report: ${fmtBytes(orig.reportedBytes)} — the window after the jump, not the capacity.`
+      : 'A naive first-jump detector would report nothing here — it never saw a 1.5× rise.';
   }
 
   function setBusy(b) {

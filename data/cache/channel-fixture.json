@@ -7,6 +7,6 @@
     "idleMedianNs": 8.7,
     "busyMedianNs": 90.3,
     "separationX": 10.4,
-    "note": "Sustained-contention detection was rock solid at ~10x. Per-bit decoding is the hard part; see BUGS/scoping."
+    "note": "Sustained-contention detection was rock solid at ~10x. Per-bit decoding is the hard part - see the article, Part 7."
   }
 }

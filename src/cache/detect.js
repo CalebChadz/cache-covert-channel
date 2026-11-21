@@ -1,11 +1,11 @@
 // Turning a latency curve into cache boundaries.
 //
-// The original's heuristic was: walk the measurements in order, and the first
+// The naive heuristic is: walk the measurements in order, and the first
 // time a pass takes 1.5x the previous one, declare that the cache size. With no
 // repetition, no noise floor and no check that a signal exists at all, it will
 // happily report a boundary from scheduler jitter on a completely flat curve -
-// which, given defect #1, is exactly what it was doing. `originalHeuristic()`
-// below reproduces it so the page can show what 2020 would have concluded.
+// and it reports the window AFTER the jump, overstating capacity by up to 2x.
+// `originalHeuristic()` below reproduces it so the page can show the contrast.
 //
 // `detectKnees()` is the replacement: it looks at every step ratio, keeps those
 // above a threshold, and refuses to report anything when the curve has no
@@ -47,9 +47,9 @@ export function dynamicRange(points) {
 //
 // Returns both the corrected `knees` (with gradual rolloffs merged) and the
 // unmerged `rawKnees` (every supra-threshold step). The raw list is kept on
-// purpose: a detector that reports a boundary the hardware does not have is the
-// same class of bug as BUGS.md #1, just subtler, and the page shows it as a
-// teaching moment rather than hiding it (see BUGS.md #17).
+// purpose: a detector can invent a boundary the hardware does not have, and
+// the merge rule that prevents that can also hide a real one. The page shows
+// both lists rather than picking one silently.
 export function detectKnees(points, { minRatio = 1.4, minRange = 3 } = {}) {
   if (points.length < 3) {
     return { knees: [], rawKnees: [], merged: [], range: 1, confident: false };
@@ -105,7 +105,7 @@ export function detectKnees(points, { minRatio = 1.4, minRange = 3 } = {}) {
   return { knees, rawKnees, merged, range, confident: knees.length > 0 };
 }
 
-// The 2020 detector, reproduced. Returns the size it would have reported, or
+// The naive first-jump detector, reproduced. Returns the size it would have reported, or
 // null. Note it compares against the previous measurement with no smoothing,
 // takes the FIRST crossing, and has no notion of whether the curve is flat.
 export function originalHeuristic(points, threshold = 1.5) {
@@ -131,7 +131,7 @@ export function describe(points, mode) {
           `A working measurement spans 10x or more. The prefetcher is hiding the misses, ` +
           `so this is measuring streaming bandwidth rather than cache capacity.` +
           (orig
-            ? ` The 2020 heuristic would nonetheless have reported ${formatBytes(orig.reportedBytes)} — from noise.`
+            ? ` A naive first-jump detector would nonetheless have reported ${formatBytes(orig.reportedBytes)} — from noise.`
             : ''),
         tone: 'err',
       };

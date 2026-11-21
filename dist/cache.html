@@ -3,237 +3,402 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cache-Size Side Channel</title>
+<title>Live demo — cache side channel &amp; covert channel</title>
+<meta property="og:title" content="Live demo — measure your CPU cache, then talk through it">
+<meta name="description" content="Measure your CPU cache hierarchy from a coarse browser timer, then send a message through the cache between a page and a Web Worker.">
+<meta name="theme-color" content="#080b12">
+<meta name="color-scheme" content="dark">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="cache-covert-channel">
+<meta property="og:description" content="Measure your CPU cache hierarchy from a coarse browser timer, then send a message through the cache between a page and a Web Worker.">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%23080b12%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22%2322d3ee%22%2F%3E%3Crect%20x%3D%2217%22%20y%3D%2217%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22%23c04cff%22%2F%3E%3Crect%20x%3D%2217%22%20y%3D%226%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22none%22%20stroke%3D%22%2322d3ee%22%20stroke-width%3D%221.5%22%20opacity%3D%22.5%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%2217%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22none%22%20stroke%3D%22%23c04cff%22%20stroke-width%3D%221.5%22%20opacity%3D%22.5%22%2F%3E%3C%2Fsvg%3E">
 <style>
 :root {
   color-scheme: dark;
-  --bg: #080b12; --panel: #0e141f; --panel-2: #121b29; --line: #243247;
-  --text: #cdd9e5; --muted: #6c819b; --accent: #22d3ee; --accent2: #c04cff;
+  --bg: #070a10; --panel: #0d131d; --panel-2: #121a27; --line: #1f2b3d; --line-2: #2c3d55;
+  --text: #d5e0ec; --text-hi: #f1f6fb; --muted: #7d91aa; --accent: #22d3ee; --accent2: #c04cff;
   --ok: #37f39a; --err: #ff3b6b; --warn: #ffb020;
   --glow: 0 0 0.5px currentColor, 0 0 8px rgba(34,211,238,0.35);
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Code", Consolas, monospace;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --maxw: 1240px;
+  --gutter: clamp(16px, 4vw, 32px);
+  --radius: 12px;
+  --nav-h: 56px;
+  --ease: cubic-bezier(.2,.7,.2,1);
 }
-* { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-h) + 12px); }
 body {
-  margin: 0; background: var(--bg); color: var(--text);
-  font: 14px/1.55 var(--mono);
-  background-image:
-    radial-gradient(1200px 600px at 80% -10%, rgba(34,211,238,0.06), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(192,76,255,0.05), transparent 60%);
-  background-attachment: fixed;
+  margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+  font: 400 16px/1.65 var(--sans);
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
-/* faint scanlines over the whole page */
-body::before {
-  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
-  background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.016) 0 1px, transparent 1px 3px);
-  mix-blend-mode: overlay;
+/* ambient glow — a fixed layer instead of background-attachment:fixed (janky on iOS) */
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(1100px 600px at 85% -10%, rgba(34,211,238,0.08), transparent 60%),
+    radial-gradient(900px 520px at -10% 105%, rgba(192,76,255,0.07), transparent 60%);
+}
+/* faint scanlines — desktop only (full-screen blend layers cost scroll perf on phones) */
+@media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.014) 0 1px, transparent 1px 3px);
+  }
 }
 ::selection { background: rgba(34,211,238,0.3); color: #fff; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-shadow: var(--glow); }
+img, svg, canvas { max-width: 100%; }
+a { color: var(--accent); text-decoration: none; text-underline-offset: 3px; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.skip {
+  position: absolute; left: 12px; top: -60px; z-index: 100; padding: 8px 14px;
+  background: var(--accent); color: #001014; font-weight: 700; border-radius: 8px;
+}
+.skip:focus { top: 10px; text-decoration: none; }
 
 /* ---- site chrome ---- */
 .sitenav {
-  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
-  padding: 11px 24px; border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(18,27,41,0.9), rgba(8,11,18,0.7));
-  backdrop-filter: blur(6px); position: sticky; top: 0; z-index: 50;
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(7,10,16,0.72);
+  -webkit-backdrop-filter: saturate(160%) blur(14px); backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid var(--line);
 }
-.sitenav .brand { font-weight: 700; letter-spacing: 0.02em; margin-right: 4px; }
-.sitenav .brand a { color: var(--text); }
-.sitenav .brand a::before { content: "▚ "; color: var(--accent); text-shadow: var(--glow); }
-.sitenav a { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-.sitenav a:hover { color: var(--accent); }
-.sitenav a.on { color: var(--text); }
-.sitenav a.on::before { content: "› "; color: var(--accent); }
-.sitenav .spacer { flex: 1; }
-.sitenav .ghlink { border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; color: var(--muted); }
-.sitenav .ghlink:hover { border-color: var(--accent); color: var(--accent); }
+.sitenav-inner {
+  max-width: var(--maxw); margin: 0 auto; height: var(--nav-h);
+  display: flex; align-items: center; gap: 20px; padding: 0 var(--gutter);
+}
+.sitenav a { text-decoration: none; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text-hi); font: 700 14px/1 var(--mono); letter-spacing: -0.01em; flex: none; }
+.brand .logo {
+  width: 20px; height: 20px; border-radius: 5px; flex: none;
+  background:
+    linear-gradient(var(--accent),var(--accent)) 0 0 / 9px 9px no-repeat,
+    linear-gradient(var(--accent2),var(--accent2)) 100% 100% / 9px 9px no-repeat;
+  filter: drop-shadow(0 0 6px rgba(34,211,238,0.45));
+}
+.navlinks { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.navlinks::-webkit-scrollbar { display: none; }
+.navlinks a {
+  color: var(--muted); font: 500 13px/1 var(--sans); white-space: nowrap;
+  padding: 9px 12px; border-radius: 8px; transition: color .15s, background .15s;
+}
+.navlinks a:hover { color: var(--text-hi); background: rgba(255,255,255,0.04); }
+.navlinks a.on { color: var(--text-hi); background: rgba(34,211,238,0.1); box-shadow: inset 0 0 0 1px rgba(34,211,238,0.25); }
+.ghlink {
+  display: inline-flex; align-items: center; gap: 8px; flex: none;
+  border: 1px solid var(--line-2); border-radius: 999px; padding: 7px 14px;
+  color: var(--text); font: 500 13px/1 var(--sans); transition: border-color .15s, color .15s, background .15s;
+}
+.ghlink:hover { border-color: var(--accent); color: var(--accent); background: rgba(34,211,238,0.06); }
 
-header.page { padding: 22px 24px 14px; border-bottom: 1px solid var(--line); position: relative; }
-header.page h1 {
-  margin: 0; font-size: 19px; font-weight: 700; letter-spacing: 0.01em; color: var(--text);
+header.page {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: clamp(28px, 5vw, 48px) var(--gutter) clamp(18px, 3vw, 28px);
 }
-header.page h1::before { content: "$ "; color: var(--accent); text-shadow: var(--glow); }
-header.page p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+header.page h1 {
+  margin: 0; font: 700 clamp(26px, 4.2vw, 40px)/1.15 var(--sans); letter-spacing: -0.025em; color: var(--text-hi);
+  text-wrap: balance;
+}
+header.page h1::before { content: "$ "; font-family: var(--mono); color: var(--accent); text-shadow: var(--glow); font-weight: 600; }
+header.page p { margin: 10px 0 0; color: var(--muted); font-size: clamp(15px, 1.6vw, 17px); max-width: 760px; text-wrap: pretty; }
+.eyebrow {
+  display: inline-block; margin-bottom: 12px; font: 600 11px/1 var(--mono); letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--accent);
+}
 
 /* ---- two-column demo layout ---- */
-.wrap { display: grid; grid-template-columns: 300px 1fr; gap: 0; min-height: calc(100vh - 120px); }
-.panel { padding: 20px 24px; border-right: 1px solid var(--line); background: rgba(14,20,31,0.4); }
-.stage { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.wrap {
+  max-width: var(--maxw); margin: 0 auto; padding: 0 var(--gutter) 8px;
+  display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start;
+}
+.panel {
+  padding: 20px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(18,26,39,0.75), rgba(13,19,29,0.55));
+}
+/* keep the controls in view while the results scroll — only where the whole panel fits */
+@media (min-width: 961px) and (min-height: 860px) {
+  .panel { position: sticky; top: calc(var(--nav-h) + 16px); }
+}
+.stage { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
-fieldset { border: 0; padding: 0; margin: 0 0 20px; }
+fieldset { border: 0; padding: 0; margin: 0 0 20px; min-width: 0; }
 legend {
-  padding: 0; margin-bottom: 9px; font-size: 10px; font-weight: 700;
+  padding: 0; margin-bottom: 12px; font: 700 11px/1 var(--mono);
   text-transform: uppercase; letter-spacing: 0.14em; color: var(--accent);
 }
 legend::before { content: "// "; opacity: 0.6; }
-label { display: block; margin-bottom: 11px; font-size: 12px; color: var(--muted); }
-label span { display: block; margin-bottom: 4px; letter-spacing: 0.02em; }
-label.inline { display: flex; align-items: center; gap: 8px; }
-label.inline input { width: auto; accent-color: var(--accent); }
+label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+label span { display: block; margin-bottom: 6px; }
+label.inline { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text); }
+label.inline span { margin: 0; }
+label.inline input { width: 18px; height: 18px; min-height: 0; flex: none; accent-color: var(--accent); margin: 0; }
 input, select, button, textarea {
-  width: 100%; padding: 8px 10px; background: var(--panel); color: var(--text);
-  border: 1px solid var(--line); border-radius: 6px; font: inherit; font-size: 13px;
+  width: 100%; min-height: 42px; padding: 9px 12px; background: var(--bg); color: var(--text-hi);
+  border: 1px solid var(--line-2); border-radius: 10px; font: inherit; font-size: 14px;
+  transition: border-color .15s, box-shadow .15s, background .15s, color .15s;
 }
-input[type="range"] { padding: 0; accent-color: var(--accent); }
+select {
+  appearance: none; -webkit-appearance: none; padding-right: 34px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%237d91aa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center;
+}
+input[type="range"] { padding: 0; min-height: 28px; border: 0; background: transparent; accent-color: var(--accent); }
+input:hover:not(:disabled), select:hover:not(:disabled) { border-color: #3b506d; }
 input:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 10px rgba(34,211,238,0.25);
+  box-shadow: 0 0 0 3px rgba(34,211,238,0.18);
 }
-button { cursor: pointer; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 12px; transition: box-shadow .15s, border-color .15s, color .15s; }
-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 10px rgba(34,211,238,0.2); }
+input:disabled, select:disabled { opacity: 0.5; cursor: not-allowed; }
+button {
+  cursor: pointer; font: 600 13px/1 var(--sans); letter-spacing: 0.02em;
+  background: var(--panel-2); color: var(--text);
+}
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.primary {
-  background: linear-gradient(180deg, rgba(34,211,238,0.18), rgba(34,211,238,0.06));
-  border-color: var(--accent); color: var(--accent); text-shadow: var(--glow);
+  background: linear-gradient(135deg, #22d3ee, #3aa8ff 60%, #8b5cf6);
+  border-color: transparent; color: #001018; font-weight: 700;
+  box-shadow: 0 6px 20px -6px rgba(34,211,238,0.55), inset 0 1px 0 rgba(255,255,255,0.25);
 }
-button.primary:hover:not(:disabled) { box-shadow: 0 0 16px rgba(34,211,238,0.45); color: #c8fbff; }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+button.primary:hover:not(:disabled) { color: #001018; filter: brightness(1.08); box-shadow: 0 8px 26px -6px rgba(34,211,238,0.7), inset 0 1px 0 rgba(255,255,255,0.3); }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---- link-styled buttons (hero CTAs) ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px;
+  padding: 12px 22px; border-radius: 999px; font: 600 15px/1 var(--sans); text-decoration: none;
+  border: 1px solid var(--line-2); color: var(--text-hi); background: rgba(255,255,255,0.03);
+  transition: transform .2s var(--ease), box-shadow .2s, border-color .2s, background .2s;
+}
+.btn:hover { text-decoration: none; border-color: var(--accent); background: rgba(34,211,238,0.07); transform: translateY(-1px); }
+.btn.primary {
+  border-color: transparent; color: #001018;
+  background: linear-gradient(135deg, #22d3ee, #3aa8ff 60%, #8b5cf6);
+  box-shadow: 0 10px 30px -10px rgba(34,211,238,0.7), inset 0 1px 0 rgba(255,255,255,0.25);
+}
+.btn.primary:hover { filter: brightness(1.08); }
+.btn .arr { transition: transform .2s var(--ease); }
+.btn:hover .arr { transform: translateX(3px); }
 
 /* ---- stats strip ---- */
-.stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .stat {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
-  position: relative; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px;
+  position: relative; overflow: hidden; min-width: 0;
 }
-.stat::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); opacity: 0.6; }
-.stat b { display: block; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
-.stat span { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.stat::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent); opacity: 0.7;
+}
+.stat b {
+  display: block; font: 700 clamp(18px, 2vw, 22px)/1.25 var(--mono); font-variant-numeric: tabular-nums;
+  color: var(--text-hi); overflow-wrap: anywhere;
+}
+.stat span { display: block; margin-top: 4px; font: 600 10px/1.3 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 
 /* ---- canvas surfaces ---- */
 .canvasBox {
   flex: 1; min-height: 300px; background: var(--panel);
-  border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 10px;
 }
 .canvasBox.fixed { flex: none; }
 .canvasBox canvas { width: 100%; height: 100%; display: block; }
-.chartBox { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
-.chartBox b { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 700; }
+.chartBox { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
+.chartBox b { display: block; margin-bottom: 6px; font: 600 10px/1.3 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 .chartBox canvas { width: 100%; display: block; }
 
 /* live vs simulated provenance badge */
 .srcbadge {
-  display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
-  text-transform: uppercase; padding: 5px 12px; border-radius: 20px;
-  border: 1px solid var(--line); background: var(--panel); margin-bottom: 2px;
+  display: inline-flex; align-self: flex-start; align-items: center; max-width: 100%;
+  font: 700 11px/1.35 var(--mono); letter-spacing: 0.05em;
+  text-transform: uppercase; padding: 7px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel);
 }
-.srcbadge.live { color: var(--ok); border-color: var(--ok); box-shadow: 0 0 12px rgba(55,243,154,0.3); }
-.srcbadge.sim { color: var(--warn); border-color: var(--warn); }
+.srcbadge.live { color: var(--ok); border-color: rgba(55,243,154,0.6); background: rgba(55,243,154,0.07); box-shadow: 0 0 14px rgba(55,243,154,0.22); }
+.srcbadge.sim { color: var(--warn); border-color: rgba(255,176,32,0.55); background: rgba(255,176,32,0.06); }
 
-.status { font-size: 13px; color: var(--muted); min-height: 20px; }
+.status { font: 13px/1.6 var(--mono); color: var(--muted); min-height: 20px; overflow-wrap: anywhere; }
 .status::before { content: "> "; color: var(--accent); }
+.status:empty::before { content: none; }
 .status.ok { color: var(--ok); } .status.ok::before { color: var(--ok); }
 .status.err { color: var(--err); } .status.err::before { color: var(--err); }
 .status.warn { color: var(--warn); } .status.warn::before { color: var(--warn); }
 
-.legendkey { display: flex; gap: 14px; font-size: 12px; color: var(--muted); align-items: center; flex-wrap: wrap; }
-.sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; box-shadow: 0 0 6px currentColor; }
-.note { font-size: 12px; color: var(--muted); margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
-.note code, code { font-family: var(--mono); font-size: 0.92em; background: var(--panel-2); color: var(--accent); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); }
+.legendkey { display: flex; gap: 8px 18px; font-size: 13px; color: var(--muted); align-items: center; flex-wrap: wrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; box-shadow: 0 0 6px currentColor; }
+.note { font-size: 13px; color: var(--muted); margin: 16px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+code {
+  font-family: var(--mono); font-size: 0.86em; background: var(--panel-2); color: var(--accent);
+  padding: 0.12em 0.42em; border-radius: 6px; border: 1px solid var(--line); overflow-wrap: anywhere;
+}
+footer.site code { background: var(--panel-2); }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 /* ---- prose (landing + explainers) ---- */
-.prose { max-width: 760px; padding: 30px 24px 64px; }
-.prose h2 { font-size: 15px; margin: 34px 0 9px; letter-spacing: 0.01em; color: var(--text); }
-.prose h2::before { content: "## "; color: var(--accent); opacity: 0.7; }
-.prose h3 { font-size: 12px; margin: 24px 0 7px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; }
-.prose p { margin: 0 0 13px; color: var(--text); }
-.prose ul { margin: 0 0 13px; padding-left: 20px; }
-.prose li { margin-bottom: 6px; }
+.prose { max-width: 760px; margin: 0 auto; padding: clamp(28px, 5vw, 48px) var(--gutter) 72px; }
+.prose > :first-child { margin-top: 0; }
+.prose h2 {
+  font: 700 clamp(21px, 2.6vw, 26px)/1.25 var(--sans); letter-spacing: -0.02em;
+  margin: 2.2em 0 0.6em; color: var(--text-hi); text-wrap: balance;
+}
+.prose h2::before { content: "## "; font-family: var(--mono); font-size: 0.8em; color: var(--accent); opacity: 0.75; }
+.prose h3 { font: 700 12px/1.4 var(--mono); margin: 2.2em 0 0.8em; color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; }
+.prose p { margin: 0 0 1.05em; color: var(--text); text-wrap: pretty; }
+.prose ul, .prose ol { margin: 0 0 1.1em; padding-left: 1.3em; }
+.prose li { margin-bottom: 0.55em; }
 .prose li::marker { color: var(--accent); }
-.prose em { color: #e7eef6; font-style: normal; border-bottom: 1px dotted var(--muted); }
-.prose strong { color: #fff; }
-.prose table { border-collapse: collapse; font-size: 13px; margin: 6px 0 18px; width: 100%; }
-.prose th, .prose td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
-.prose th { background: var(--panel); font-weight: 600; color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; }
-.prose td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); color: var(--accent); }
+.prose em { color: var(--text-hi); font-style: italic; }
+.prose strong { color: var(--text-hi); font-weight: 650; }
+.prose a { text-decoration: underline; text-decoration-color: rgba(34,211,238,0.4); }
+.prose a:hover { text-decoration-color: var(--accent); }
+.prose table {
+  border-collapse: separate; border-spacing: 0; font-size: 14px; margin: 8px 0 22px; width: 100%;
+  border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+}
+.prose th, .prose td { border-bottom: 1px solid var(--line); padding: 10px 14px; text-align: left; vertical-align: top; }
+.prose tr:last-child > * { border-bottom: 0; }
+.prose th + td, .prose td + td, .prose th + th { border-left: 1px solid var(--line); }
+.prose th { background: var(--panel); font: 600 11px/1.4 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.prose td.num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 8px 0 22px; }
+.tablewrap table { margin: 0; }
 
 /* ---- landing cards ---- */
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; margin: 20px 0 8px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; margin: 28px 0 8px; }
 .card {
-  border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px;
-  background: linear-gradient(180deg, var(--panel), rgba(8,11,18,0.6)); color: inherit; display: block;
-  position: relative; transition: border-color .15s, box-shadow .15s, transform .15s;
+  border: 1px solid var(--line); border-radius: 16px; padding: 22px 22px 20px;
+  background: linear-gradient(180deg, rgba(18,26,39,0.9), rgba(10,15,23,0.7)); color: inherit; display: flex; flex-direction: column;
+  position: relative; overflow: hidden; text-decoration: none !important;
+  transition: border-color .2s, box-shadow .25s var(--ease), transform .25s var(--ease);
 }
-.card:hover { border-color: var(--accent); box-shadow: 0 0 22px rgba(34,211,238,0.18); transform: translateY(-2px); }
-.card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 700; color: var(--text); text-transform: none; letter-spacing: 0; }
-.card h3::before { content: "▶ "; color: var(--accent); font-size: 11px; }
-.card p { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.card::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s;
+  background: radial-gradient(400px 160px at 20% 0%, rgba(34,211,238,0.12), transparent 70%);
+}
+.card:hover { border-color: rgba(34,211,238,0.6); box-shadow: 0 18px 40px -20px rgba(34,211,238,0.45); transform: translateY(-3px); }
+.card:hover::after { opacity: 1; }
+.card h3 { margin: 0 0 8px; font: 700 18px/1.3 var(--sans); letter-spacing: -0.01em; color: var(--text-hi); text-transform: none; }
+.card h3 .arr { color: var(--accent); margin-left: 4px; display: inline-block; transition: transform .2s var(--ease); }
+.card:hover h3 .arr { transform: translateX(4px); }
+.card p { margin: 0 0 16px; font-size: 15px; color: var(--muted); flex: 1; }
 .card .tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .card .tag {
-  font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
-  border: 1px solid var(--line); border-radius: 20px; padding: 3px 9px; color: var(--muted); background: var(--bg);
+  font: 600 10px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
+  border: 1px solid var(--line-2); border-radius: 999px; padding: 6px 10px; color: var(--muted); background: rgba(7,10,16,0.6);
 }
 
 .callout {
-  border-left: 3px solid var(--accent); background: linear-gradient(90deg, rgba(34,211,238,0.07), transparent);
-  padding: 13px 16px; margin: 18px 0; font-size: 13px; border-radius: 0 6px 6px 0;
+  border: 1px solid rgba(34,211,238,0.22); border-left: 3px solid var(--accent);
+  background: linear-gradient(90deg, rgba(34,211,238,0.07), rgba(34,211,238,0.015));
+  padding: 16px 18px; margin: 24px 0; font-size: 15px; border-radius: 10px;
 }
-.callout.warn { border-left-color: var(--warn); background: linear-gradient(90deg, rgba(255,176,32,0.08), transparent); }
-.callout.danger { border-left-color: var(--err); background: linear-gradient(90deg, rgba(255,59,107,0.08), transparent); }
+.callout.warn { border-color: rgba(255,176,32,0.25); border-left-color: var(--warn); background: linear-gradient(90deg, rgba(255,176,32,0.08), rgba(255,176,32,0.015)); }
+.callout.danger { border-color: rgba(255,59,107,0.25); border-left-color: var(--err); background: linear-gradient(90deg, rgba(255,59,107,0.08), rgba(255,59,107,0.015)); }
 .callout p:last-child { margin-bottom: 0; }
 .callout strong { color: #fff; }
 
 /* chips for the honest-framing banner */
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0; }
 .chip {
-  font-size: 11px; letter-spacing: 0.04em; color: var(--muted);
-  border: 1px solid var(--line); border-radius: 20px; padding: 4px 11px; background: var(--panel);
+  font-size: 13px; color: var(--muted); line-height: 1.35;
+  border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; background: rgba(13,19,29,0.75);
 }
-.chip b { color: var(--ok); font-weight: 700; }
+.chip b { color: var(--ok); font: 700 12px/1 var(--mono); }
 
-.lede { font-size: 15px; line-height: 1.65; color: #dce6f1; }
+.lede { font-size: clamp(17px, 1.9vw, 19px); line-height: 1.65; color: #dfe8f2; }
 
-footer.site {
-  border-top: 1px solid var(--line); padding: 18px 24px; color: var(--muted); font-size: 12px;
+footer.site { border-top: 1px solid var(--line); margin-top: 24px; background: rgba(7,10,16,0.6); }
+.footer-inner { max-width: var(--maxw); margin: 0 auto; padding: 28px var(--gutter) 36px; color: var(--muted); font-size: 14px; }
+.footer-inner p { margin: 0 0 6px; max-width: 760px; }
+.footer-inner strong { color: var(--text); font-family: var(--mono); font-weight: 600; }
+.footer-inner .fine { margin-top: 14px; font-size: 13px; }
+
+/* ---- responsive ---- */
+@media (max-width: 960px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }
-footer.site code { background: var(--panel-2); }
-
-@media (max-width: 820px) {
-  .wrap { grid-template-columns: 1fr; }
-  .panel { border-right: 0; border-bottom: 1px solid var(--line); }
-  .stats { grid-auto-flow: row; grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 640px) {
+  :root { --nav-h: 52px; }
+  .brand-text { display: none; }
+  .sitenav-inner { gap: 10px; }
+  .navlinks a { padding: 9px 10px; }
+  .ghlink { padding: 8px; }
+  .ghlink span { display: none; }
+  /* 16px stops iOS Safari zooming the page when a field is focused */
+  input, select, textarea { font-size: 16px; }
+  button, input, select { min-height: 44px; }
+  .prose table { font-size: 13px; }
+  .prose th, .prose td { padding: 9px 10px; }
+  .stat { padding: 12px 13px; }
+}
+@media (hover: none) {
+  .card:hover, .btn:hover { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 }
 
-#env table, #table table { border-collapse: collapse; font-size: 12px; width: 100%; }
-#env th, #table th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 10px 3px 0; white-space: nowrap; }
-#env td, #table td { padding: 3px 0; }
-#table td, #table th { border-bottom: 1px solid var(--line); padding: 3px 8px 3px 0; }
+#env table, #table table { border-collapse: collapse; font-size: 13px; width: 100%; }
+#env th, #table th { text-align: left; font-weight: 500; color: var(--muted); padding: 5px 10px 5px 0; }
+#env td, #table td { padding: 5px 0; }
+#env td.num { white-space: nowrap; color: var(--text-hi); }
+#table th { font: 600 10px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; background: var(--panel); }
+#table td, #table th { border-bottom: 1px solid var(--line); padding: 7px 12px 7px 0; }
 #table td.num, #env td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
-#table { max-height: 260px; overflow: auto; }
-.side { display: grid; grid-template-columns: 1fr 220px; gap: 16px; align-items: start; }
-@media (max-width: 900px) { .side { grid-template-columns: 1fr; } }
+#table th:not(:first-child) { text-align: right; }
+#table { max-height: 360px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 0 0 14px; }
+.side { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px; align-items: start; }
+#originalSays { margin: 0; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+#originalSays:empty { display: none; }
+@media (max-width: 900px) { .side { grid-template-columns: minmax(0, 1fr); } }
+.envlabel { display: block; font: 700 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
 
 /* covert-channel finale */
-#channel { border-top: 3px solid var(--accent); margin-top: 8px; }
-.ch-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 0; }
-.ch-panel { padding: 20px 24px; border-right: 1px solid var(--line); }
-.ch-stage { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.ch-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.ch-pane { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
-.ch-pane h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
-.ch-pane .big { font-family: var(--mono); font-size: 20px; min-height: 26px; word-break: break-all; }
-.ch-pane.recv .big { color: var(--accent); }
-#chLiveNote { border-left: 3px solid var(--warn); background: var(--panel); padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12px; }
+.section-break { max-width: var(--maxw); margin: 24px auto 0; padding: 0 var(--gutter); }
+.section-break hr { border: 0; height: 1px; margin: 0; background: linear-gradient(90deg, transparent, var(--accent) 20%, var(--accent2) 80%, transparent); opacity: .55; }
+#channel h1::before { content: "» "; }
+.ch-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.ch-pane { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.ch-pane h4 { margin: 0 0 8px; font: 600 10px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.ch-pane .big { font: 600 clamp(18px, 2.4vw, 24px)/1.3 var(--mono); min-height: 30px; overflow-wrap: anywhere; color: var(--text-hi); }
+.ch-pane.recv { border-color: rgba(34,211,238,0.35); }
+.ch-pane.recv .big { color: var(--accent); text-shadow: 0 0 14px rgba(34,211,238,0.35); }
+#chLiveNote { margin-top: 16px; border: 1px solid rgba(255,176,32,0.3); border-left: 3px solid var(--warn); background: rgba(255,176,32,0.06); padding: 12px 14px; border-radius: 10px; font-size: 13px; }
 .ch-raw { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-@media (max-width: 820px) { .ch-wrap { grid-template-columns: 1fr; } .ch-panel { border-right: 0; border-bottom: 1px solid var(--line); } }
+.panel-hint { font-size: 13px; color: var(--muted); margin: 0; }
+#chChecksum.pass { color: var(--ok); }
+#chChecksum.fail { color: var(--err); }
+@media (max-width: 480px) { .ch-panes { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
-<nav class="sitenav">
-    <span class="brand"><a href="index.html">cache-covert-channel</a></span>
-    <a href="index.html">Overview</a>
-    <a href="cache.html" class="on">Live demo</a>
-    <a href="article.html">How it works</a>
-    <span class="spacer"></span>
-    <a class="ghlink" href="https://github.com/CalebChadz/cache-covert-channel" target="_blank" rel="noopener">GitHub ↗</a>
-  </nav>
+<a class="skip" href="#main">Skip to content</a>
+<nav class="sitenav" aria-label="Site">
+  <div class="sitenav-inner">
+    <a class="brand" href="index.html" aria-label="cache-covert-channel home"><span class="logo" aria-hidden="true"></span><span class="brand-text">cache-covert-channel</span></a>
+    <div class="navlinks">
+      <a href="index.html">Overview</a>
+      <a href="cache.html" class="on" aria-current="page">Live demo</a>
+      <a href="article.html">How it works</a>
+    </div>
+    <a class="ghlink" href="https://github.com/CalebChadz/cache-covert-channel" target="_blank" rel="noopener" aria-label="Source on GitHub"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>GitHub</span></a>
+  </div>
+</nav>
 
+<main id="main">
 <header class="page">
+  <span class="eyebrow">Part 1 · Measure</span>
   <h1>Cache-Size Side Channel</h1>
-  <p>COMPX304, 2020 · a timing attack that infers your CPU's cache hierarchy — and the story of why the original never worked</p>
+  <p>A timing measurement that infers your CPU's cache hierarchy from a deliberately coarse browser clock — and why the obvious version of it comes out flat</p>
 </header>
 
 <div class="wrap">
@@ -245,8 +410,8 @@ footer.site code { background: var(--panel-2); }
         <select id="mode">
           <option value="chase-replay" selected>Pointer chase — captured run</option>
           <option value="chase-live">Pointer chase — live on this machine</option>
-          <option value="linear-replay">2020 algorithm — captured run</option>
-          <option value="linear-live">2020 algorithm — live on this machine</option>
+          <option value="linear-replay">Naive linear stride — captured run</option>
+          <option value="linear-live">Naive linear stride — live on this machine</option>
         </select>
       </label>
       <label>
@@ -278,8 +443,8 @@ footer.site code { background: var(--panel-2); }
     </div>
 
     <div class="note">
-      <b style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted)">This browser, right now</b>
-      <div id="env" style="margin-top:8px"></div>
+      <span class="envlabel">This browser, right now</span>
+      <div id="env"></div>
     </div>
 
     <p class="note">
@@ -301,7 +466,7 @@ footer.site code { background: var(--panel-2); }
     <div class="status" id="verdict"></div>
     <div class="side">
       <div id="table"></div>
-      <p class="status" id="originalSays" style="font-size:12px"></p>
+      <p class="status" id="originalSays"></p>
     </div>
   </div>
 </div>
@@ -324,102 +489,68 @@ footer.site code { background: var(--panel-2); }
     are harmless. The technique is not.
   </p>
 
-  <h2>The original did not work</h2>
+  <h2>Why the obvious version is flat</h2>
   <p>
-    The 2020 program walked memory with a linear 64-byte stride — one cache line
-    at a time, straight through the window, wrapping at the end. Run it above and
-    the curve is <strong>flat</strong>: roughly the same nanoseconds per access
-    from 16 KB to 32 MB, across a 2000× range of working-set sizes.
+    The obvious way to walk memory is a linear 64-byte stride: one cache line at a
+    time, straight through the window, wrapping at the end. Pick "Naive linear
+    stride" above and the curve is <strong>flat</strong>, 0.55–0.88 ns per access
+    from 16 KB to 32 MB in the captured run.
   </p>
   <p>
-    The reason is not a security control. It is the hardware prefetcher. A linear
-    stride is the most predictable access pattern that exists, so the CPU
-    recognises it instantly and streams the next lines into cache before the
-    program asks for them. The misses still happen; their <em>latency</em> never
-    appears, because the data has already arrived. The program was measuring
-    sequential memory bandwidth, which is roughly constant, and its
-    "first 1.5× jump" detector was firing on scheduler noise. Whatever number it
-    printed in 2020 was not derived from the thing it claimed to measure.
+    Two hardware features hide the misses: the <strong>prefetcher</strong>, which
+    spots the fixed stride and fetches lines before they're asked for, and
+    <strong>memory-level parallelism</strong>, because each iteration is independent
+    so the core overlaps many misses at once. This demo doesn't separate the two.
+    The fix defeats both: a <strong>dependent load chain</strong>, where the
+    working set is one random cycle and each cache line holds the address of the
+    next. Load <em>N+1</em> can't start until load <em>N</em> returns, there's no
+    pattern to predict, and every access pays its full latency.
   </p>
   <p>
-    The fix is a <strong>dependent load chain</strong>. Lay the working set out
-    as a single random cycle, where the value at each cache line is the address
-    of the next one. Now load <em>N+1</em>'s address is unknown until load
-    <em>N</em> returns, the prefetcher has nothing to predict, and every access
-    pays its true latency. That is the pointer-chase mode, and it produces the
-    real hierarchy.
+    Read the boundaries as brackets. The sweep doubles the window each step, so
+    "~128 KB" means the level holds somewhere between 128 and 256 KB of working
+    set. And the "naive first-jump" detector shown beside the table is there as a
+    warning: it reports the window <em>after</em> the jump and has no noise floor.
   </p>
 
   <h2>What about timer coarsening?</h2>
   <p>
-    The standard browser defence against timing attacks is to blunt the clock.
-    <code>performance.now()</code> is quantised — to 100 µs in Chrome outside a
-    cross-origin-isolated context, and to 1 ms in Firefox and Safari — and
-    <code>SharedArrayBuffer</code>, which can be turned into a high-resolution
-    counting timer, is gated behind
-    <code>Cross-Origin-Opener-Policy</code> and
-    <code>Cross-Origin-Embedder-Policy</code> headers. The panel on the left
-    shows what this page actually has available; on a double-clicked local file
-    it will report no isolation and no <code>SharedArrayBuffer</code>.
+    Browsers blunt the clock on purpose. <code>performance.now()</code> is rounded
+    to 100 µs in Chrome outside a cross-origin-isolated page, and around 1 ms in
+    some other browsers. <code>SharedArrayBuffer</code>, which can be turned into a
+    much finer counter, needs special
+    <code>Cross-Origin-Opener-Policy</code> /
+    <code>Cross-Origin-Embedder-Policy</code> headers. The panel on the left shows
+    what this page actually has.
   </p>
   <div class="callout">
     <p>
-      <strong>And it does not stop this attack.</strong> Coarsening defeats
-      attempts to time a <em>single</em> memory access. This measurement never
-      does that — it times a loop of hundreds of thousands of dependent loads and
-      divides. The timed region lasts milliseconds, so a 100 µs quantum is a
-      rounding error, and even Firefox's 1 ms quantum leaves three orders of
-      magnitude of headroom.
+      <strong>It doesn't stop this measurement, but it isn't free.</strong> Each
+      sample times hundreds of thousands of dependent loads (milliseconds of work)
+      and divides, so the clock's rounding is a small error. The cost is
+      <em>time</em>: every sample must run long enough to swamp the rounding.
+      That barely matters for measuring cache sizes, but it's what caps the covert
+      channel's bitrate below. Recovering a single secret byte (Spectre-style)
+      requires resolving individual accesses, and that is what coarsening really
+      makes hard.
     </p>
   </div>
   <p>
-    So the live mode runs from a plain <code>file://</code> page with no server,
-    no headers and no <code>SharedArrayBuffer</code>. That is worth being precise
-    about rather than triumphant: cross-origin isolation is aimed at a sharper
-    class of attack than this one. Recovering cache sizes is coarse and harmless.
-    Recovering a secret <em>byte</em> via Spectre needs to resolve individual
-    accesses, and that is exactly what the mitigation makes hard.
+    For the full argument, the evidence and its limits, see
+    <a href="article.html">How it works</a>.
   </p>
-  <p>
-    The honest summary is that the defence I expected to be the obstacle was not
-    the obstacle at all, and the thing that actually defeated the original
-    measurement was a performance optimisation nobody put there for security
-    reasons. Working out which of the two was in the way required building it and
-    measuring, not reasoning about it.
-  </p>
-
-  <h2>Running it natively</h2>
-  <p>
-    The original Java and a smaller C variant are both still in the repository
-    and still run:
-  </p>
-  <table>
-    <tr><th>Java</th><td class="num">javac SideChannelAttack.java &amp;&amp; java SideChannelAttack 256 20 1</td></tr>
-    <tr><th>C</th><td class="num">cc -O2 main.c -o main &amp;&amp; ./main</td></tr>
-  </table>
-  <p>
-    Both inherit defect #1 and will produce the same flat result for the same
-    reason. They are kept as the artifact that started this, not as a working
-    tool.
-  </p>
-
-  <h2>Defects catalogued</h2>
-  <ul>
-    <li><strong>#1</strong> Linear stride is fully prefetchable — measures bandwidth, not capacity. <em>Fixed via pointer chase; the original is retained as a selectable mode.</em></li>
-    <li><strong>#2</strong> <code>modu = size - 1</code> is only a valid mask for powers of two, but the original stepped 1 MB, 2 MB, 3 MB… At 3 MB the mask <code>0x2FFFFF</code> selects a 2 MB working set. Most windows were not the size they claimed.</li>
-    <li><strong>#3</strong> <code>i * 64</code> overflows a Java <code>int</code> past i ≈ 33.5 million; with the recommended <code>steps=512</code> that is 94% of the loop. JavaScript numbers are doubles and do not overflow, so this port is deliberately not bug-compatible here.</li>
-    <li><strong>#4</strong> The detector takes the first 1.5× jump with no repetition and no noise floor, so it reports a boundary even from a flat curve. Replaced; the original is shown alongside for comparison.</li>
-  </ul>
 </div>
 
 <!-- ===================== COVERT CHANNEL FINALE ===================== -->
+<div class="section-break" aria-hidden="true"><hr></div>
 <header class="page" id="channel">
+  <span class="eyebrow">Part 2 · Weaponise &amp; defend</span>
   <h1>Finale — a cache covert channel</h1>
-  <p>The same timing primitive, put to work: two cooperating contexts talking with no shared memory, no network, no storage — only the cache</p>
+  <p>The same timing primitive, put to work: the page and a Web Worker pass a message through contention for the cache and memory system — no shared memory or network carries the payload</p>
 </header>
 
-<div class="ch-wrap">
-  <div class="ch-panel">
+<div class="wrap">
+  <div class="panel">
     <fieldset>
       <legend>Message</legend>
       <label>
@@ -429,36 +560,36 @@ footer.site code { background: var(--panel-2); }
       <label>
         <span>Mode</span>
         <select id="chMode">
-          <option value="replay" selected>Replay — simulated, always works</option>
+          <option value="replay" selected>Replay — simulation (illustrative)</option>
           <option value="live">Live — real contention (experimental)</option>
         </select>
       </label>
       <label class="inline">
         <input type="checkbox" id="chFec">
-        <span style="margin:0">Error-correcting code (repetition-3)</span>
+        <span>Error-correcting code (repetition-3)</span>
       </label>
     </fieldset>
 
     <fieldset>
-      <legend>Defence — the capacity dial</legend>
+      <legend>Defence dial (simulated)</legend>
       <label class="inline">
         <input type="checkbox" id="chCoarsen">
-        <span style="margin:0">Coarsen the receiver's timer</span>
+        <span>Coarsen the timer (model)</span>
       </label>
       <label>
         <span>Channel quality — <b id="chQualityOut">85%</b></span>
         <input type="range" id="chQuality" min="10" max="100" value="85" step="5">
       </label>
-      <p style="font-size:12px;color:var(--muted);margin:0">
-        These don't switch the channel off — they degrade it. Watch the error
-        rate climb and the capacity fall. A shared cache can't be un-shared in
-        software.
+      <p class="panel-hint">
+        These controls change the <em>simulation</em>, not your hardware. They
+        illustrate how noise raises the error rate and lowers capacity. They are
+        not measurements of a real defence.
       </p>
     </fieldset>
 
     <button id="chRun" class="primary">Transmit</button>
 
-    <div id="chLiveNote" style="margin-top:14px;display:none">
+    <div id="chLiveNote" style="display:none">
       Live mode is <strong>best-effort</strong>. Whether real bits decode depends
       on this machine and its background load; on a busy laptop it may not land
       clean bits at all. That's the honest state of the art for a coarse-timed
@@ -466,7 +597,7 @@ footer.site code { background: var(--panel-2); }
     </div>
   </div>
 
-  <div class="ch-stage">
+  <div class="stage">
     <div class="stats">
       <div class="stat"><b id="chBitrate">–</b><span>Raw bitrate</span></div>
       <div class="stat"><b id="chBer">–</b><span>Bit error rate</span></div>
@@ -506,87 +637,62 @@ footer.site code { background: var(--panel-2); }
 <div class="prose">
   <h2>What you're looking at</h2>
   <p>
-    Two cooperating contexts on this one machine — the page and a Web Worker —
-    with <strong>no shared variable, no network, no storage</strong> between them.
-    The only thing they share is the physical cache. The sender transmits a bit
-    by either hammering a big memory region (a <code>1</code>) or staying quiet (a
-    <code>0</code>) during a time slot. The receiver never sees that directly; it
-    just times how long its <em>own</em> memory probe takes. When the sender is
-    hammering, it evicts the receiver's data and the probe slows down. That
-    latency difference is the message.
+    Two threads of this page — the main thread (receiver) and a Web Worker
+    (sender) — pass a message without the payload going through shared memory,
+    the network or storage. To send a <code>1</code>, the sender streams through
+    a 24 MB buffer for a time slot; for a <code>0</code> it waits. The receiver
+    repeatedly times a pointer chase over its own 8 MB region. When the sender is
+    busy, the receiver's data gets pushed out of the shared cache and its probe
+    slows from ~9 ns to ~90 ns per access. That difference is the message.
   </p>
   <p>
-    This is a <strong>covert channel</strong> between parties who both want to
-    communicate — not an attack that reads a victim's secrets. Both ends are my
-    code, cooperating on purpose. Nothing crosses a trust boundary; there is no
-    victim and no secret. It is a demonstration of a primitive that has been in
-    the security literature for decades (Prime+Probe and its relatives), not a
-    discovery, and there is no vulnerability here to report.
+    It's a <strong>covert channel</strong> between two parties who both want to
+    talk, not an attack that reads anyone's secrets. Both ends are this page's
+    own code, and the technique has been in the security literature for decades.
   </p>
 
-  <h3>The two hard parts</h3>
-  <p>
-    <strong>Timing without a fine clock.</strong> The browser's clock is
-    deliberately coarse, but — exactly as with the measurement at the top of this
-    page — that doesn't matter, because each probe times a long loop, not a single
-    access. What <em>does</em> bite is that a probe over evicted memory takes far
-    longer than over resident memory, so a naïve fixed-slot scheme drifts out of
-    sync within a few bits. The fix is <strong>Manchester coding</strong>: every
-    bit is sent as a transition (a <code>1</code>-chip and a <code>0</code>-chip),
-    so the signal carries its own clock and the receiver re-locks on every bit. A
-    short preamble at the start lets it calibrate the fast/slow threshold from the
-    real channel before the message begins.
-  </p>
-  <p>
-    <strong>Honesty about live mode.</strong> In the feasibility study the raw
-    contention signal was enormous — a 10× latency swing, idle to saturated — so
-    <em>detecting</em> the sender is easy. Turning that into cleanly-decoded bits
-    live is genuine engineering and depends on the machine and its load. The
-    replay mode is a simulation calibrated to the measured hardware figures, so it
-    always demonstrates the full pipeline; live mode runs the real thing. On the
-    author's hardware the live path decoded a short message <strong>intact — 12.5
-    b/s, 0% bit-error rate, checksum pass</strong>, so it is verified to work, not
-    just theorised. Clean decode still depends on the machine and its background
-    load, so it stays labelled best-effort: on a busy laptop it may not land clean
-    bits.
-  </p>
-
-  <h3>The defence — a dial, not a switch</h3>
-  <p>
-    Here is the part that surprised me, and it corrects a common intuition. You
-    might expect <strong>site isolation</strong> — putting cross-origin pages in
-    separate processes — to kill this. It doesn't. Site isolation defends against
-    a different thing: one origin's code speculatively reading another's memory
-    <em>inside the same process</em> (Spectre). But the L2 and system-level caches
-    and the memory bus are <strong>physically shared across every core and
-    process</strong>. Two separate processes still contend for the same silicon,
-    so a contention channel like this one <strong>survives process and site
-    isolation</strong>.
-  </p>
-  <p>
-    What actually limits it are measures that degrade the <em>capacity</em>:
-    coarsening the timer, withholding the high-resolution <code>SharedArrayBuffer</code>
-    counter unless a page is cross-origin isolated, and throttling background
-    work. Toggle the timer coarsening or drag the quality slider above and watch
-    the error rate rise and the capacity fall — but never quite to zero without
-    also making the channel useless. That's the real lesson: you can't un-share a
-    cache in software, so the mitigations raise the cost and lower the bandwidth
-    rather than closing the channel outright. Defence in depth, not a padlock.
-  </p>
+  <h3>Being precise about what this shows</h3>
+  <ul>
+    <li><strong>Replay is a simulation.</strong> It's seeded and calibrated to
+    live measurements (~9 ns idle, ~90 ns busy), so it looks the same on every
+    machine. The badge always says which one you're seeing.</li>
+    <li><strong>Live is real, and best-effort.</strong> It runs a ~1 s pre-flight
+    check first. If the slow/fast gap is under 2× (common when the OS puts both
+    threads on the same core, or the machine is busy), it switches to the
+    simulation and says so. On the author's machine, live decoded
+    <code>cache</code> intact at a raw 12.5 b/s (about 6 b/s once framing
+    overhead is counted).</li>
+    <li><strong>Timing is agreed out-of-band.</strong> The page tells the worker
+    when to start through an ordinary message, and both sides keep time against
+    the wall clock from that instant. The payload never travels that way, but
+    genuinely isolated parties would have to recover timing from the signal.</li>
+    <li><strong>Manchester coding</strong> sends each bit as a transition
+    (occupy→idle or idle→occupy). Here it keeps one calibrated threshold valid
+    for the whole message and makes some errors detectable. Timing comes from the
+    shared start instant, not from clock recovery.</li>
+    <li><strong>Both threads share one process.</strong> The argument that such
+    channels survive process, site or VM isolation comes from published research
+    and how the hardware is built. This page doesn't demonstrate it.</li>
+  </ul>
 
   <h3>Reading the readouts</h3>
   <ul>
-    <li><strong>Raw bitrate</strong> — Manchester halves the data rate, so this is modest by design; a covert channel trades speed for stealth and reliability.</li>
-    <li><strong>Bit error rate</strong> — shown, not hidden. With the error-correcting code on, compare the receiver's clean output against the faint “raw decode” beneath the chart.</li>
-    <li><strong>Capacity</strong> — the Shannon limit for this error rate and bitrate: the honest information throughput once errors are accounted for. It collapses to zero as the error rate approaches a coin flip.</li>
-    <li><strong>Checksum</strong> — a whole-message integrity check, so a corrupted run is reported as corrupted rather than shown as if it were fine.</li>
+    <li><strong>Raw bitrate</strong> — 40 ms per chip, two chips per bit. Useful throughput is lower once the preamble, framing and (optional) error correction are counted.</li>
+    <li><strong>Bit error rate</strong> — of the decoded message against what was sent. Short messages make this a coarse estimate.</li>
+    <li><strong>Capacity</strong> — the Shannon limit, rate × (1 − H(p)), using the raw bit error rate across the whole frame. An upper bound, not something this codec achieves.</li>
+    <li><strong>Checksum</strong> — one byte, sum mod 256. It catches any single flipped message bit, but it's weak against multiple errors.</li>
   </ul>
 </div>
 
+</main>
+
 <footer class="site">
-    A cooperative cache-timing covert channel &middot; cache side-channel measurement, weaponised and defended.
-    Educational security research &mdash; no victim, no secret, no network. Every page is a single file you can save and run offline.
-  </footer>
+  <div class="footer-inner">
+    <p><strong>cache-covert-channel</strong> — a cooperative cache-timing covert channel: measured, weaponised and defended.</p>
+    <p>Educational security research — no victim, no secret, no network. Every page is a single file you can save and run offline.</p>
+    <p class="fine">© 2026 Caleb Chadderton · <a href="https://github.com/CalebChadz/cache-covert-channel" target="_blank" rel="noopener">Source on GitHub</a></p>
+  </div>
+</footer>
 
 <script>
 const FIXTURES = {
@@ -611,10 +717,10 @@ const FIXTURES = {
     ]
   },
   "linear": {
-    "label": "Faithful 2020 algorithm — captured run",
+    "label": "Naive linear stride — captured run",
     "machine": "Chromium 148, macOS, 6 cores, non-isolated context",
     "captured": "2026-09-09",
-    "note": "The original's linear 64-byte stride. Flat across a 2000x range of working-set sizes: the prefetcher hides every miss.",
+    "note": "Linear 64-byte stride. Flat (0.55-0.88 ns) from 16 KB to 32 MB: prefetching and overlapping independent loads hide the miss latency.",
     "points": [
       { "bytes": 16384, "ns": 0.811, "min": 0.74, "max": 0.9 },
       { "bytes": 32768, "ns": 0.644, "min": 0.62, "max": 0.69 },
@@ -640,7 +746,7 @@ const CHANNEL_FIXTURE = {
     "idleMedianNs": 8.7,
     "busyMedianNs": 90.3,
     "separationX": 10.4,
-    "note": "Sustained-contention detection was rock solid at ~10x. Per-bit decoding is the hard part; see BUGS/scoping."
+    "note": "Sustained-contention detection was rock solid at ~10x. Per-bit decoding is the hard part - see the article, Part 7."
   }
 };
 </script>
@@ -649,8 +755,7 @@ const CHANNEL_FIXTURE = {
 // Small canvas helpers shared by every demo page. No dependencies.
 //
 // Everything here is presentation only - no page's algorithm logic lives in
-// this file, the same separation binpack-vns keeps between src/vns.js and
-// src/ui.js.
+// this file.
 
 // Size a canvas to its CSS box at device pixel ratio, returning a context
 // already scaled so all drawing can use CSS pixel coordinates.
@@ -707,7 +812,7 @@ function lineChart(canvas, series, opts = {}) {
   const muted = cssVar('--muted', '#59636e');
 
   // horizontal gridlines + y labels
-  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+  ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'right';
   const yTickCount = 4;
@@ -756,7 +861,7 @@ function lineChart(canvas, series, opts = {}) {
       ctx.fillStyle = m.color || cssVar('--err', '#cf222e');
       ctx.textAlign = x > padL + plotW * 0.7 ? 'right' : 'left';
       ctx.textBaseline = 'top';
-      ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
       ctx.fillText(m.label, x + (x > padL + plotW * 0.7 ? -4 : 4), padT + 2);
     }
   }
@@ -788,7 +893,7 @@ function lineChart(canvas, series, opts = {}) {
 
   // axis labels
   ctx.fillStyle = muted;
-  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+  ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
   if (opts.xLabel) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
@@ -825,11 +930,9 @@ function sparkline(canvas, values, opts = {}) {
 // ---- src/cache/chase.js --------------------------------------------
 // Pointer-chase memory latency measurement.
 //
-// This is the corrected version of the 2020 attack. The original walked memory
-// with a linear 64-byte stride (see linear.js), which the hardware prefetcher
-// predicts perfectly - it streams the data in ahead of time and hides the miss
-// latency completely, producing a flat line at every working-set size. That
-// program was measuring sequential bandwidth, not cache capacity.
+// The naive version walks memory with a linear 64-byte stride (see linear.js),
+// whose loads are both predictable (prefetchable) and independent of each other
+// (overlappable), so miss latency is hidden and the curve comes out flat.
 //
 // The fix is a dependent load chain. Lay out the working set as a single random
 // cycle through cache-line-sized slots, where the value stored at each slot is
@@ -932,8 +1035,7 @@ function allocate(maxBytes, floorBytes = 4 * 1024 * 1024) {
 }
 
 // Run the sweep as a generator, yielding after every window so the caller can
-// paint between measurements and keep the page responsive. Same pattern as the
-// VNS generators in binpack-vns.
+// paint between measurements and keep the page responsive.
 function* sweep({ buf, sizes, repeats = 3, seed = 12345, warmup = true }) {
   if (warmup) {
     // Global JIT warmup before any measurement is recorded.
@@ -959,38 +1061,22 @@ function* sweep({ buf, sizes, repeats = 3, seed = 12345, warmup = true }) {
 }
 
 // ---- src/cache/linear.js -------------------------------------------
-// The 2020 algorithm, ported faithfully - including the reason it does not work.
+// The naive measurement: a linear 64-byte stride - the obvious first attempt,
+// and the one this project started from. Kept as a selectable mode so its flat
+// line can be shown next to the pointer-chase curve.
 //
-// From SideChannelAttack.java:
+//     mask = windowBytes - 1;
+//     for (i = 0; i < steps; i++) bytes[(i * 64) & mask] &= 1;
 //
-//     modu = testCacheSize - 1;
-//     startTime = System.nanoTime();
-//     for (i = 0; i < steps; i++) { arr[(i * 64) & modu] &= 1; }
-//     endTime = System.nanoTime();
+// Why it fails to show the hierarchy: a fixed-stride walk is the easiest
+// pattern there is for the hardware prefetcher, AND every iteration is
+// independent of the last, so an out-of-order core can keep many misses in
+// flight at once (memory-level parallelism). Both hide miss latency. This
+// experiment does not separate the two effects - see the article.
 //
-// This page ships it as a selectable mode so the flat line it produces can be
-// shown next to the pointer-chase curve. That contrast is the point: the
-// original was not defeated by any security control, it was defeated by a
-// performance optimisation.
-//
-// Three defects, all preserved here and all listed in BUGS.md:
-//
-//  #1  A 64-byte linear stride is the most predictable access pattern that
-//      exists. The hardware prefetcher streams the next lines in before they
-//      are asked for, so miss latency never appears in the measurement. The
-//      result is roughly constant from 16 KB to 32 MB - it measures sequential
-//      bandwidth, not cache capacity.
-//
-//  #2  `modu = testCacheSize - 1` is only a valid bitmask when testCacheSize is
-//      a power of two. The original steps 1 MB, 2 MB, 3 MB, 4 MB... so at 3 MB
-//      the mask is 0x2FFFFF, which selects a 2 MB working set, not 3 MB. Most
-//      of the windows it tested were not the size it thought.
-//
-//  #3  `i * 64` overflows a Java int once i exceeds ~33.5 million. With the
-//      README's recommended steps=512 (536,870,912 iterations) it overflows for
-//      94% of the loop. JavaScript numbers are doubles and do not overflow
-//      here, so this port is deliberately NOT bug-compatible on that point -
-//      it cannot be, and the difference is noted rather than emulated.
+// Also note `windowBytes - 1` is only a valid mask for power-of-two windows
+// (3 MB - 1 = 0x2FFFFF selects only 2 MB of addresses). effectiveWindow() makes
+// that measurable; the page only ever sweeps powers of two.
 function isPowerOfTwo(n) {
   return n > 0 && (n & (n - 1)) === 0;
 }
@@ -1045,12 +1131,12 @@ function* sweepLinear({ bytes, sizes, repeats = 3, steps = 4_000_000 }) {
 // ---- src/cache/detect.js -------------------------------------------
 // Turning a latency curve into cache boundaries.
 //
-// The original's heuristic was: walk the measurements in order, and the first
+// The naive heuristic is: walk the measurements in order, and the first
 // time a pass takes 1.5x the previous one, declare that the cache size. With no
 // repetition, no noise floor and no check that a signal exists at all, it will
 // happily report a boundary from scheduler jitter on a completely flat curve -
-// which, given defect #1, is exactly what it was doing. `originalHeuristic()`
-// below reproduces it so the page can show what 2020 would have concluded.
+// and it reports the window AFTER the jump, overstating capacity by up to 2x.
+// `originalHeuristic()` below reproduces it so the page can show the contrast.
 //
 // `detectKnees()` is the replacement: it looks at every step ratio, keeps those
 // above a threshold, and refuses to report anything when the curve has no
@@ -1091,9 +1177,9 @@ function dynamicRange(points) {
 //
 // Returns both the corrected `knees` (with gradual rolloffs merged) and the
 // unmerged `rawKnees` (every supra-threshold step). The raw list is kept on
-// purpose: a detector that reports a boundary the hardware does not have is the
-// same class of bug as BUGS.md #1, just subtler, and the page shows it as a
-// teaching moment rather than hiding it (see BUGS.md #17).
+// purpose: a detector can invent a boundary the hardware does not have, and
+// the merge rule that prevents that can also hide a real one. The page shows
+// both lists rather than picking one silently.
 function detectKnees(points, { minRatio = 1.4, minRange = 3 } = {}) {
   if (points.length < 3) {
     return { knees: [], rawKnees: [], merged: [], range: 1, confident: false };
@@ -1149,7 +1235,7 @@ function detectKnees(points, { minRatio = 1.4, minRange = 3 } = {}) {
   return { knees, rawKnees, merged, range, confident: knees.length > 0 };
 }
 
-// The 2020 detector, reproduced. Returns the size it would have reported, or
+// The naive first-jump detector, reproduced. Returns the size it would have reported, or
 // null. Note it compares against the previous measurement with no smoothing,
 // takes the FIRST crossing, and has no notion of whether the curve is flat.
 function originalHeuristic(points, threshold = 1.5) {
@@ -1175,7 +1261,7 @@ function describe(points, mode) {
           `A working measurement spans 10x or more. The prefetcher is hiding the misses, ` +
           `so this is measuring streaming bandwidth rather than cache capacity.` +
           (orig
-            ? ` The 2020 heuristic would nonetheless have reported ${formatBytes(orig.reportedBytes)} — from noise.`
+            ? ` A naive first-jump detector would nonetheless have reported ${formatBytes(orig.reportedBytes)} — from noise.`
             : ''),
         tone: 'err',
       };
@@ -1275,17 +1361,20 @@ function initCache() {
     if (!points.length) return;
     const xTicks = points.map((p) => ({ x: p.bytes, label: fmtBytes(p.bytes).replace(' ', '') }));
     const { knees } = detectKnees(points);
+    // Thin the x labels on narrow (phone) screens so they never collide.
+    const narrow = (els.chart.clientWidth || 600) < 560;
     lineChart(els.chart, [{
       points: points.map((p) => [p.bytes, p.ns]),
       color: mode === 'linear' ? getComputedStyle(document.documentElement).getPropertyValue('--warn').trim() || '#9a6700' : undefined,
       dots: true,
     }], {
       logX: true,
-      height: 280,
+      height: narrow ? 240 : 300,
+      padL: narrow ? 44 : 52,
       xLabel: 'working set size',
       yLabel: 'ns per access',
       yFormat: (v) => v.toFixed(v < 10 ? 1 : 0),
-      xTicks: xTicks.filter((_, i) => i % 2 === 0),
+      xTicks: xTicks.filter((_, i) => i % (narrow ? 4 : 2) === 0),
       marks: knees.map((k) => ({ x: k.atBytes, label: k.label })),
     });
   }
@@ -1320,8 +1409,8 @@ function initCache() {
 
     const orig = originalHeuristic(points);
     els.originalSays.textContent = orig
-      ? `The 2020 heuristic (first 1.5× jump, no repetition, no noise floor) would report: ${fmtBytes(orig.reportedBytes)}.`
-      : 'The 2020 heuristic would report nothing — it never saw a 1.5× jump.';
+      ? `A naive first-jump detector (first 1.5× rise, no repeats, no noise floor) would report: ${fmtBytes(orig.reportedBytes)} — the window after the jump, not the capacity.`
+      : 'A naive first-jump detector would report nothing here — it never saw a 1.5× rise.';
   }
 
   function setBusy(b) {
@@ -1467,10 +1556,13 @@ if (typeof document !== 'undefined') {
 //
 // A "chip" is one half-bit-slot decision: 1 = the sender occupied its cache
 // region during that half-slot, 0 = it stayed idle. Manchester coding maps each
-// data bit to two chips with a guaranteed transition, so the receiver can
-// recover the clock from the signal itself rather than needing a shared one -
-// which is the whole reason it is used here (see COVERT-CHANNEL-SCOPING.md 2:
-// naive fixed slots drifted to BER 0.5).
+// data bit to two chips with a guaranteed transition. In principle that lets a
+// receiver recover the clock from the signal itself. THIS decoder does not do
+// clock recovery: chip alignment comes from the live path's shared start
+// instant (see channel.js). What Manchester buys here is (a) balance - every
+// bit is one high + one low chip, so one preamble-calibrated threshold stays
+// valid for the whole frame - and (b) error detection: [0,0] / [1,1] pairs are
+// impossible and are counted as violations.
 //
 // Frame on the wire (all chips):
 //
@@ -1479,8 +1571,9 @@ if (typeof document !== 'undefined') {
 //   preamble : PREAMBLE_PAIRS x [1,0]  - raw alternating chips, NOT Manchester.
 //              Used to (a) find chip phase and (b) calibrate the 0/1 threshold
 //              from real hi/lo samples.
-//   SFD      : start-of-frame delimiter, a fixed byte, Manchester-encoded, that
-//              the decoder locates to find where the framed data begins.
+//   SFD      : start-of-frame delimiter, a fixed byte, Manchester-encoded. The
+//              decoder checks it (sfdOk) at the expected position; it does not
+//              search for it, because alignment comes from the shared start.
 //   length   : 1 byte, number of payload bytes.
 //   payload  : the message bytes.
 //   checksum : 1 byte, sum of payload bytes mod 256, for error DETECTION.
@@ -1603,8 +1696,8 @@ function encodeFrame(text, { fec = false } = {}) {
 
 // ---- threshold calibration -------------------------------------------------
 
-// The preamble is raw 1,0,1,0,... so the odd-indexed samples are "1" (occupied,
-// high latency) and even-indexed are "0" (idle, low). Average each group and put
+// The preamble is raw 1,0,1,0,... so the even-indexed samples are "1" (occupied,
+// high latency) and odd-indexed are "0" (idle, low). Average each group and put
 // the threshold at the midpoint. Returns nulls if the preamble shows no
 // separation (channel too noisy / sender absent).
 function calibrate(preambleSamples) {
@@ -1698,8 +1791,8 @@ function bitErrorRate(truthText, gotText) {
 //
 // This is what makes the demo reliable regardless of hardware. It takes an
 // encoded chip sequence and renders the latency samples a receiver *would* see,
-// using a model calibrated from the real measurements in the feasibility study
-// (idle ~9 ns, occupied ~90 ns per access; see COVERT-CHANNEL-SCOPING.md 1).
+// using a model calibrated from live measurements on the author's machine
+// (idle ~9 ns, occupied ~90 ns per access - see data/cache/channel-fixture.json).
 // Noise, drift and timer coarsening are parameters, so the same code powers:
 //
 //   - the replay fallback (fixed seed, low noise -> always decodes cleanly),
@@ -1784,19 +1877,26 @@ function binaryEntropy(p) {
 // between the main thread (receiver) and a Web Worker (sender), on this machine,
 // right now. No shared memory, no postMessage payload - only contention.
 //
-// This is the best-effort path. The feasibility study
-// (COVERT-CHANNEL-SCOPING.md 1) established that the contention SIGNAL is huge
-// and trivially detectable (~10x), but that turning it into reliably-decoded
-// bits is genuine engineering bounded by two things measured there:
+// This is the best-effort path. Early feasibility runs on the author's machine
+// showed the contention SIGNAL is large and easy to detect (~10x), but that
+// turning it into reliably-decoded bits is bounded by two things:
 //
 //   - the timer-quantum floor: a probe must do >~100us of work to rise above
 //     the coarse clock, so each reliable sample costs ~1ms+,
-//   - synchronisation drift: a probe whose duration depends on the bit will
-//     overrun its slot and desync, so the probe MUST be constant-work.
+//   - synchronisation drift: a probe's DURATION depends on the bit (~10x
+//     longer when evicted), so a receiver that schedules "next slot starts
+//     when this probe ends" drifts out of step within a few bits.
 //
-// The design below addresses both: a fixed step-count probe (constant work
-// regardless of contention) sampled several times per chip and medianed, on
-// absolute Date.now() chip boundaries so error does not accumulate. Whether it
+// The design below addresses both: a fixed step-count probe sampled several
+// times inside a guard window of each chip and medianed, with every chip
+// boundary computed from ONE shared start instant on the wall clock
+// (Date.now()), so a slow probe cannot push later chips out of place.
+//
+// Honesty note: that start instant is handed to the worker via postMessage,
+// i.e. synchronisation is agreed out-of-band. The payload never travels that
+// way, and the decoder sees only latency samples - but a channel between
+// genuinely isolated parties would need in-band clock/frame recovery, which
+// this demo does not implement. Whether it
 // decodes cleanly depends on the machine and its background load; the page
 // treats a live failure as part of the honest story and falls back to replay.
 //
@@ -1855,9 +1955,9 @@ function makeProbe(regionBytes = 8 * 1024 * 1024, seed = 7) {
   for (let i = n - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
   for (let i = 0; i < n; i++) buf[perm[i] * STRIDE] = perm[(i + 1) % n] * STRIDE;
 
-  // Constant-work probe: fixed step count so its DURATION does not depend on
-  // whether the region is currently evicted (that dependence is what wrecked
-  // synchronisation in the feasibility study).
+  // Fixed-work probe: a fixed step count, so each sample averages over the same
+  // number of dependent loads. Its duration still varies with contention; the
+  // caller keeps sync by using absolute chip boundaries, not probe end times.
   return function probeNs(steps) {
     let p = 0;
     const t0 = performance.now();
@@ -2000,13 +2100,13 @@ function drawScope(canvas, samples, truthChips, threshold, revealed) {
     ctx.strokeStyle = accent; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(padL, y(threshold)); ctx.lineTo(w - 8, y(threshold)); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = accent; ctx.font = '9px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = accent; ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.fillText('decision threshold', padL + 2, y(threshold) - 2);
   }
 
   // y axis labels
-  ctx.fillStyle = muted; ctx.font = '9px ui-sans-serif, system-ui, sans-serif';
+  ctx.fillStyle = muted; ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.fillText(Math.round(maxV) + ' ns', padL - 4, y(maxV));
   ctx.fillText('0', padL - 4, y(0));
@@ -2079,6 +2179,7 @@ function initChannel() {
   const rawBitrate = 1000 / (CHIP_MS * 2); // Manchester halves the data rate
 
   let anim = null;
+  let lastFrame = null; // { result, truthChips, revealed } — repainted on resize
 
   function setStatus(msg, cls = '') { els.status.textContent = msg; els.status.className = 'status ' + cls; }
 
@@ -2102,6 +2203,7 @@ function initChannel() {
     const cal = result.calibration;
 
     const paint = () => {
+      lastFrame = { result, truthChips, revealed };
       drawScope(els.scope, result.samples, truthChips, cal ? cal.threshold : null, revealed);
       drawOccupancy(els.occupancy, truthChips, revealed);
       // progressive text: decode only the chips revealed so far is complex;
@@ -2120,21 +2222,41 @@ function initChannel() {
       if (revealed >= total) {
         clearInterval(anim); anim = null;
         els.decoded.textContent = result.text || '(nothing)';
-        finalReadouts(result);
+        finalReadouts(result, truthChips);
       }
     }, stepMs);
   }
 
-  function finalReadouts(result) {
+  // Raw (pre-FEC) bit error probability across the WHOLE frame after the
+  // preamble: compare the Manchester bits the receiver thresholded against the
+  // bits that were sent. This is the crossover probability of the binary
+  // symmetric channel, which is what Shannon capacity is defined on. (Using the
+  // decoded message's BER instead was wrong: a failed decode reads as 100%
+  // "error", and 1 - H(1) = 1 reported FULL capacity for a dead channel.)
+  function rawBitErrorProb(result, truthChips) {
+    if (!result.calibration || result.calibration.threshold == null || !truthChips) return null;
+    const th = result.calibration.threshold;
+    const pre = PREAMBLE_PAIRS * 2;
+    const got = manchesterDecode(result.samples.slice(pre).map((v) => (v > th ? 1 : 0))).bits;
+    const want = manchesterDecode(truthChips.slice(pre)).bits;
+    const n = Math.min(got.length, want.length);
+    if (!n) return null;
+    let e = 0;
+    for (let i = 0; i < n; i++) if (got[i] !== want[i]) e++;
+    return e / n;
+  }
+
+  function finalReadouts(result, truthChips) {
     const truth = els.message.value;
     const ber = bitErrorRate(truth, result.text || '');
+    const pRaw = rawBitErrorProb(result, truthChips);
     els.sent.textContent = truth;
     els.decodedRaw.textContent = result.rawText != null ? result.rawText : result.text;
     els.statBitrate.textContent = rawBitrate.toFixed(1) + ' b/s';
-    els.statBer.textContent = (ber * 100).toFixed(1) + '%';
-    els.statCapacity.textContent = channelCapacity(ber, rawBitrate).toFixed(1) + ' b/s';
+    els.statBer.textContent = result.text ? (ber * 100).toFixed(1) + '%' : 'no decode';
+    els.statCapacity.textContent = pRaw == null ? '0.0 b/s' : channelCapacity(pRaw, rawBitrate).toFixed(1) + ' b/s';
     els.statChecksum.textContent = result.checksumOk ? 'pass' : 'FAIL';
-    els.statChecksum.className = 'stat';
+    els.statChecksum.className = result.checksumOk ? 'pass' : 'fail';
     const live = result.source === 'live';
     const sep = result.calibration && result.calibration.separation ? result.calibration.separation : null;
     const pre = result.note ? result.note + ' ' : '';
@@ -2274,8 +2396,18 @@ function initChannel() {
   els.mode.addEventListener('change', () => {
     els.liveNote.style.display = els.mode.value === 'live' ? '' : 'none';
   });
+  // Repaint the last frame at the new width (rotation, window resize) so the
+  // canvases never stay stretched or blurry. rAF-throttled.
+  let resizeQueued = false;
   window.addEventListener('resize', () => {
-    // cheap redraw of last state is skipped; a re-run is one click away.
+    if (resizeQueued || !lastFrame) return;
+    resizeQueued = true;
+    requestAnimationFrame(() => {
+      resizeQueued = false;
+      const { result, truthChips, revealed } = lastFrame;
+      drawScope(els.scope, result.samples, truthChips, result.calibration ? result.calibration.threshold : null, revealed);
+      drawOccupancy(els.occupancy, truthChips, revealed);
+    });
   });
 
   els.qualityOut.textContent = els.quality.value + '%';

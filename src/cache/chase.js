@@ -1,10 +1,8 @@
 // Pointer-chase memory latency measurement.
 //
-// This is the corrected version of the 2020 attack. The original walked memory
-// with a linear 64-byte stride (see linear.js), which the hardware prefetcher
-// predicts perfectly - it streams the data in ahead of time and hides the miss
-// latency completely, producing a flat line at every working-set size. That
-// program was measuring sequential bandwidth, not cache capacity.
+// The naive version walks memory with a linear 64-byte stride (see linear.js),
+// whose loads are both predictable (prefetchable) and independent of each other
+// (overlappable), so miss latency is hidden and the curve comes out flat.
 //
 // The fix is a dependent load chain. Lay out the working set as a single random
 // cycle through cache-line-sized slots, where the value stored at each slot is
@@ -108,8 +106,7 @@ export function allocate(maxBytes, floorBytes = 4 * 1024 * 1024) {
 }
 
 // Run the sweep as a generator, yielding after every window so the caller can
-// paint between measurements and keep the page responsive. Same pattern as the
-// VNS generators in binpack-vns.
+// paint between measurements and keep the page responsive.
 export function* sweep({ buf, sizes, repeats = 3, seed = 12345, warmup = true }) {
   if (warmup) {
     // Global JIT warmup before any measurement is recorded.

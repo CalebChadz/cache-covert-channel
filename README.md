@@ -21,7 +21,7 @@ This is a demonstration of a decades-old primitive, not an exploit. Up front, pl
 
 ## Why it's topical
 
-In October 2026 OpenAI published an internal red-team result: two AI agents placed in **separate microVMs** on the same host — no network link, no shared files — built a **CPU cache covert channel** and used it to pass data, one agent evicting data from the cache while the other timed how long it took to reload. That is exactly the primitive demonstrated here; the only difference is the parties (two isolated agents there, a page and its Web Worker here). The lesson is the same: you can cut the network, restrict syscalls, and separate processes, and timing on a physically shared cache still leaks.
+In October 2026 OpenAI described a red-team exercise in which AI agents in **separate microVMs** on the same host — no network link, no shared writable files — used a **CPU cache covert channel** to pass data: one agent evicted data from the cache while the other timed its reloads ([coverage](https://www.tomshardware.com/tech-industry/artificial-intelligence/openais-isolated-red-team-ai-agents-built-a-hidden-cpu-cache-channel-to-talk-with-no-network-or-shared-files-exploited-cpu-cache-timing-to-bypass-microvm-sandboxes); the agents had explicit attack objectives and were often pointed at the channel). That is the primitive demonstrated here, in a much easier setting: a page and its own Web Worker, in one process.
 
 ## Quick start
 
@@ -41,11 +41,11 @@ Everything in `dist/` is completely self-contained — no server, no network, no
 
 Nothing tells a program how big the CPU's caches are, but timing reveals it: reads that hit L1 take about a nanosecond; reads that reach DRAM take eighty or more. Walk a working set that fits in cache and every access is fast; grow it past capacity and every access misses. The size at which timing jumps *is* the capacity.
 
-### 2. Fail — the prefetcher hides the signal
+### 2. Fail — the obvious walk is flat
 
-The original 2020 version walked memory with a linear stride and read a **flat line** across a 2000× range of working-set sizes. The culprit wasn't a security control — it was the **hardware prefetcher**, a performance feature that recognises a linear pattern and streams lines in before they're requested, so the miss latency never appears. The fix is a **dependent load chain** (pointer chasing): lay the working set out as one random cycle where each slot holds the address of the next, so load *N+1* can't begin until load *N* returns and the prefetcher has nothing to predict.
+A linear-stride walk reads a **flat line** (0.55–0.88 ns from 16 KB to 32 MB in the shipped capture). The culprit isn't a security control but performance hardware: the **prefetcher** fetches a predictable stride ahead of time, and because each iteration is independent the core **overlaps** many misses at once. The demo doesn't separate the two effects. The fix defeats both: a **dependent load chain** (pointer chasing) over one random cycle, so load *N+1* can't begin until load *N* returns.
 
-Timer coarsening — the usual browser defence against timing attacks — doesn't stop this, because the measurement never times a *single* access. It times a loop of hundreds of thousands of dependent loads and divides, so a 100 µs clock quantum is a rounding error.
+Timer coarsening — the usual browser defence against timing attacks — doesn't stop this, because the measurement never times a *single* access: it times a loop of hundreds of thousands of dependent loads and divides. What coarsening costs is time per sample, which is what caps the channel's bitrate. Boundaries are only bracketed to within 2× (the sweep doubles the window each step).
 
 ### 3. Weaponise — the covert channel
 
@@ -53,12 +53,12 @@ The same primitive becomes a channel. The sender transmits a bit per time slot b
 
 The two hard parts:
 
-- **Synchronisation.** A probe over evicted memory takes ~10× longer than over resident memory, so a naive fixed-slot scheme drifts out of sync within a few bits. The fix is **Manchester coding** — every bit is sent as a transition, so the signal carries its own clock and the receiver re-locks on every bit. A short raw preamble calibrates the fast/slow threshold before the message begins.
-- **Honesty about live mode.** The raw contention *signal* is large (~10× latency swing, idle to saturated) and trivially detectable. Turning that into cleanly-decoded *bits* live is genuine engineering and depends on the machine and its load. So the demo ships two modes: a deterministic **replay** (a simulator calibrated to the measured hardware figures, which always demonstrates the full pipeline) and a **live** path. The live path is verified — on the author's hardware it decoded a short message intact at 12.5 b/s with a 0% bit-error rate and a passing checksum — and remains best-effort across arbitrary machines and background load.
+- **Synchronisation.** A probe over evicted memory takes ~10× longer than over resident memory, so a receiver that starts each slot when its last probe ends drifts out of step within a few bits. The live path fixes this with **absolute chip boundaries** from one shared start instant (agreed via `postMessage` — out-of-band, which genuinely isolated parties wouldn't have), guard windows and median-of-probes sampling. **Manchester coding** keeps every bit one slow plus one fast chip, so a single threshold calibrated from a short preamble stays valid, and impossible chip pairs are flagged. The decoder does not do clock recovery.
+- **Honesty about live mode.** The raw contention *signal* is large (~10× latency swing, idle to saturated) and trivially detectable. Turning that into cleanly-decoded *bits* live is genuine engineering and depends on the machine and its load. So the demo ships two modes: a deterministic **replay** (a simulator calibrated to the measured hardware figures, which always demonstrates the full pipeline) and a **live** path. On the author's machine the live path decoded `cache` intact (12.5 b/s raw, ~6 b/s after framing overhead, 40/40 bits, checksum pass). That run's trace isn't published, the live path has no automated tests, and it remains best-effort; if a ~1 s pre-flight check finds no usable contention, the page falls back to the simulation and labels it.
 
-### 4. Defend — a capacity dial, not a kill switch
+### 4. Defend — slower, not closed
 
-The counterintuitive part: **site isolation does not close this channel.** Site isolation puts cross-origin pages in separate processes, which defeats in-process attacks like Spectre — but the last-level cache and memory bus are physically shared across every core and process, so a contention channel survives process and site isolation. What actually limits it — timer coarsening, withholding the high-resolution `SharedArrayBuffer` timer unless cross-origin isolated, scheduler throttling — *reduces capacity and reliability* without cleanly zeroing the channel. You can't un-share a cache in software. The demo's defence controls reflect this: a timer-coarsening toggle and a quality slider that make the error rate climb and the Shannon capacity fall, but never quite to zero without making the channel useless.
+Site isolation defeats in-process attacks like Spectre, but contention channels work through physically shared caches and memory, and published research has demonstrated them across processes and VMs. **This demo does not test that** — both its threads are in one process. Real mitigations (coarser timers, gated `SharedArrayBuffer`, throttling) mostly make such channels slower and noisier; removing the sharing takes hardware partitioning or separate machines. The demo's defence dial is an explicitly labelled **simulation** of how noise raises the error rate and lowers Shannon capacity, not a measurement of any real defence.
 
 ## Layout
 
@@ -78,7 +78,7 @@ dist/      the built, self-contained pages
 
 ## Testing
 
-The physical channel is non-deterministic, but the parts that decide correctness are not. The codec — Manchester encode/decode, framing, checksum, repetition-3 FEC — and the latency model are pure and fully tested: messages round-trip through a **simulated** noisy channel, degrade monotonically as noise rises, and collapse to zero capacity at a coin-flip error rate. The decode logic is verified without depending on real hardware contention.
+The physical channel is non-deterministic, but the parts that decide correctness are not. The codec — Manchester encode/decode, framing, checksum, repetition-3 FEC — and the latency model are pure and unit-tested: messages round-trip through a **simulated** noisy channel, degrade monotonically as noise rises, and collapse to zero capacity at a coin-flip error rate. The decode logic is checked without depending on real hardware contention; the live measurement and channel paths are not covered by automated tests.
 
 ```bash
 node --test "test/*.test.js"
@@ -86,11 +86,11 @@ node --test "test/*.test.js"
 
 ## Publishing to GitHub Pages
 
-All paths are relative, so `dist/` works as-is. In **Settings → Pages**, serve from a branch/folder that exposes `dist/` (for example copy `dist/*` into a `docs/` folder, or publish the `dist/` contents to a `gh-pages` branch). The landing page is `index.html`.
+`.github/workflows/pages.yml` builds the pages and deploys `dist/` on every push to `main` (set **Settings → Pages → Source** to *GitHub Actions*). All paths are relative, so `dist/` also works double-clicked from disk.
 
 ## Credits & origin
 
-Cache side-channel and surrounding projects began as University of Waikato coursework (COMPX304), 2020; rebuilt and extended into this covert-channel demonstration in 2026 by **Caleb Chadderton**. Defects found while porting the original are catalogued in [`cache-side-channel-explained.md`](cache-side-channel-explained.md).
+Built by **Caleb Chadderton**. The full write-up, including a claim-by-claim account of the evidence and its limits, is the [How it works](dist/article.html) page.
 
 ## License
 
