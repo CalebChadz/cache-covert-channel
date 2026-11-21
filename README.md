@@ -42,9 +42,11 @@ Everything in `dist/` is completely self-contained — no server, no network, no
 
 Nothing tells a program how big the CPU's caches are, but timing reveals it: reads that hit L1 take about a nanosecond; reads that reach DRAM take eighty or more. Walk a working set that fits in cache and every access is fast; grow it past capacity and every access misses. The size at which timing jumps *is* the capacity.
 
-### 2. Fail — the obvious walk is flat
+### 2. Fail — the obvious walk hides the hierarchy
 
 A linear-stride walk reads a **flat line** (0.55–0.88 ns from 16 KB to 32 MB in the shipped capture). The culprit isn't a security control but performance hardware: the **prefetcher** fetches a predictable stride ahead of time, and because each iteration is independent the core **overlaps** many misses at once. The demo doesn't separate the two effects. The fix defeats both: a **dependent load chain** (pointer chasing) over one random cycle, so load *N+1* can't begin until load *N* returns.
+
+What's left in a straight walk is *bandwidth*, which has much smaller steps (2–3× each). They show up when the loop runs faster than a level can deliver (warmed-up Safari and Chrome both do); `native/bandwidth.c` reproduces them, and `--pad` slows its loop to show the steps vanish. Live sweeps stretch every sample to ~50 ticks of the browser's clock (Safari's ticks once a millisecond) and show each reading's ±.
 
 Timer coarsening — the usual browser defence against timing attacks — doesn't stop this, because the measurement never times a *single* access: it times a loop of hundreds of thousands of dependent loads and divides. What coarsening costs is time per sample, which is what caps the channel's bitrate. Boundaries are only bracketed to within 2× (the sweep doubles the window each step).
 

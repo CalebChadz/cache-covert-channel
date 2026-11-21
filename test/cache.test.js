@@ -263,3 +263,29 @@ test('stepsForTarget grows a run until it spans the target on a coarse clock', (
   assert.ok((trueNs * steps) / 1e6 >= 50, `only ${(trueNs * steps) / 1e6} ms`);
   assert.ok(resolutionNs(quantumMs, steps) <= trueNs * 0.03);
 });
+
+test('a resolved Safari straight walk is described as bandwidth steps', () => {
+  const KB = 1024, MiB = 1024 * 1024;
+  const safari = [
+    [32 * KB, .26], [64 * KB, .27], [128 * KB, .27], [256 * KB, .62], [512 * KB, .61], [MiB, .61],
+    [2 * MiB, .61], [4 * MiB, .61], [8 * MiB, .62], [16 * MiB, .63], [32 * MiB, .90], [64 * MiB, 2.20],
+  ].map(([bytes, ns]) => ({ bytes, ns, resolutionNs: 0.005 }));
+  const d = describe(safari, 'linear');
+  assert.match(d.headline, /bandwidth/i);
+  assert.match(d.headline, /~128 KB/);
+});
+
+test('a step inside the run-to-run scatter is not a boundary', () => {
+  // from a noisy efficiency-core Chrome run: 32→64 KB read 2.14→3.32 ns but
+  // the repeats overlapped, and two reruns showed no step there
+  const pts = [
+    { bytes: 32 * 1024, ns: 2.14, min: 1.9, max: 3.5 },
+    { bytes: 64 * 1024, ns: 3.32, min: 2.7, max: 3.6 },
+    { bytes: 128 * 1024, ns: 3.36, min: 3.0, max: 3.7 },
+    { bytes: 256 * 1024, ns: 9.0, min: 8.6, max: 9.4 },
+    { bytes: 512 * 1024, ns: 9.1, min: 8.8, max: 9.5 },
+  ];
+  const labels = detectKnees(pts).knees.map((k) => k.label);
+  assert.ok(!labels.includes('~32 KB'), labels.join());
+  assert.ok(labels.includes('~128 KB'), labels.join());
+});

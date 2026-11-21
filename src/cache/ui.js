@@ -199,7 +199,7 @@ export function initCache() {
     const targetMs = Math.max(10, 50 * quantumMs);
     const opts = { sizes, repeats, targetMs, quantumMs };
     const gen = currentMode === 'linear'
-      ? sweepLinear({ bytes: new Uint8Array(alloc.buf.buffer), ...opts })
+      ? sweepLinear({ bytes: new Uint8Array(alloc.buf.buffer), ...opts, warmupMs: 400 })
       : sweep({ buf: alloc.buf, ...opts });
 
     drive(gen, currentMode, (points) => {

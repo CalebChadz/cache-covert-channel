@@ -32,3 +32,18 @@ Notes:
 - Automation-driven runs from the same day (not saved here) landed on the
   efficiency cores at 2–3× separation instead; see the article's "Adapting
   to the chip".
+
+## Naive linear walk in Safari and Chrome
+
+`linear-chrome-2026-11-22.csv` is the same walk in Chrome after the fix: the
+same steps, smaller at L1 (1.6× vs 2.3×) because its loop is slower there
+(0.48 vs 0.27 ns per line).
+
+`linear-safari-2026-11-22.csv` holds two live runs of the naive linear walk in
+Safari, before and after the clock-rounding fix. The first run's steps were
+clock ticks. The second run's steps are real: 0.27 ns per line up to 128 KB,
+0.61–0.63 ns from 256 KB to 16 MB, then 0.90 and 2.20 ns at 32 and 64 MB.
+`native/bandwidth.c`'s read-modify-write walk reproduces it
+(`data/native/bandwidth-qos-p.csv`): these are bandwidth limits, which show
+up because the compiled loop runs at about one cycle per line. Slowing the C
+loop to ~1 ns per line (`bandwidth --pad 1`) makes the L1 step vanish.

@@ -1,0 +1,19 @@
+# cache-covert-channel native/bandwidth.c
+# machine: Apple A18 Pro, Darwin 27.2.0
+# date: 2026-11-22
+# power: { "available": true, "source": "pmset", "power_source": "Battery Power", "charging": false, "level": 0.71, "status": "discharging" }
+# qos: p  repeats: 5  target_ms: 20
+window_bytes,read_ns_per_line,rmw_ns_per_line,lines
+32768,0.107,0.200,82402872
+65536,0.106,0.201,100105112
+131072,0.107,0.201,99790440
+262144,0.486,0.614,33229496
+524288,0.513,0.630,31465096
+1048576,0.516,0.632,31777560
+2097152,0.517,0.633,31756624
+4194304,0.524,0.640,31547736
+8388608,0.532,0.645,31290584
+16777216,0.557,0.654,30848256
+33554432,0.848,0.915,26570664
+67108864,1.091,2.244,9509664
+134217728,1.464,2.262,4601896

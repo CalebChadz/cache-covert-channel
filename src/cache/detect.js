@@ -50,7 +50,7 @@ export function dynamicRange(points) {
 // purpose: a detector can invent a boundary the hardware does not have, and
 // the merge rule that prevents that can also hide a real one. The page shows
 // both lists rather than picking one silently.
-export function detectKnees(points, { minRatio = 1.4, minRange = 3, minTicks = 3 } = {}) {
+export function detectKnees(points, { minRatio = 1.4, minRange = 3, minTicks = 3, separateRanges = true } = {}) {
   if (points.length < 3) {
     return { knees: [], rawKnees: [], merged: [], range: 1, confident: false };
   }
@@ -68,7 +68,13 @@ export function detectKnees(points, { minRatio = 1.4, minRange = 3, minTicks = 3
   const resolvable = (i) => {
     const a = points[i - 1], b = points[i];
     const res = Math.max(a.resolutionNs || 0, b.resolutionNs || 0);
-    return !res || (b.ns - a.ns) >= minTicks * res;
+    if (res && (b.ns - a.ns) < minTicks * res) return false;
+    // ...and only if it beats the run-to-run scatter: when the points carry
+    // their fastest/slowest repeat, the two windows' ranges must not overlap.
+    // (A noisy efficiency-core run once "found" a 1.55x step at 32 KB that
+    // its own repeats, and the next two runs, didn't support.)
+    if (separateRanges && Number.isFinite(a.max) && Number.isFinite(b.min) && b.min <= a.max) return false;
+    return true;
   };
   const steps = stepRatios(points).map((s, k) => (resolvable(k + 1) ? s : { ...s, ratio: Math.min(s.ratio, 1) }));
   const toKnee = (s) => ({
@@ -144,26 +150,19 @@ export function describe(points, mode) {
         tone: 'err',
       };
     }
-    // Structure that only appears once the window is bigger than any on-chip
-    // cache is most likely the memory-bandwidth wall: prefetching hides
-    // latency, but it can't make DRAM deliver bytes any faster.
-    const firstAt = Math.min(...knees.map((k) => k.capacityBytes));
-    if (firstAt >= 8 * MB) {
-      return {
-        headline: `Flat up to ~${formatBytes(firstAt)}, then a gentle rise`,
-        detail:
-          `Below ~${formatBytes(firstAt)} the walk stays flat: prefetching and overlapping hide the latency. ` +
-          `Past that it no longer fits in on-chip cache and streams from main memory, which is most likely ` +
-          `limited by memory bandwidth, something no prefetcher can hide. Total spread ${range.toFixed(1)}x, ` +
-          `still far less than a pointer chase over the same sizes.`,
-        tone: 'warn',
-      };
-    }
+    // Structure in a straight walk is real but it's a different quantity:
+    // prefetching hides how long one read waits, so what's left is how fast
+    // each level can DELIVER data. Those bandwidth limits show up as steps
+    // whenever the loop itself is quick enough to hit them (warmed-up Safari
+    // and Chrome on P cores both are). See native/bandwidth.c --pad.
     return {
-      headline: 'Unexpected structure in the linear sweep',
+      headline: `Small bandwidth steps near ${knees.map((k) => k.label).join(', ')}`,
       detail:
-        `Dynamic range ${range.toFixed(2)}x. This mode usually stays flat at small sizes, so a busy ` +
-        `machine is the likeliest cause. Try closing other tabs and running again.`,
+        `These are speed limits, not wait times. Prefetching hides how long any one read waits, ` +
+        `so a straight walk measures how fast each level can deliver data, and that drops a little ` +
+        `at each cache edge. You see the steps when the loop is fast enough to hit those limits. ` +
+        `Total spread ${range.toFixed(1)}x, versus roughly 80x for a pointer chase over the same sizes. ` +
+        `If a step doesn't come back on a rerun, it was background noise.`,
       tone: 'warn',
     };
   }

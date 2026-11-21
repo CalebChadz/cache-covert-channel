@@ -1,0 +1,32 @@
+# Naive linear-stride walk, live, Safari, Apple A18 Pro, on battery.
+# Copied by hand from the page's table (Window, ns/access, ±resolution).
+# run=before-fix: fixed 4M steps on Safari's ~1 ms clock, so every value is a
+#   whole number of ticks (multiples of 0.25 ns) and has no ± column.
+# run=after-fix: steps grown until each run lasts ~50 ticks (commit d6b2556).
+#   The first row was pasted as "2 KB"; the sweep's smallest window is 32 KB.
+run,window_bytes,ns_per_access,resolution_ns
+before-fix,16384,0.50,
+before-fix,32768,0.50,
+before-fix,65536,0.25,
+before-fix,131072,0.50,
+before-fix,262144,0.75,
+before-fix,524288,0.75,
+before-fix,1048576,0.75,
+before-fix,2097152,0.75,
+before-fix,4194304,0.75,
+before-fix,8388608,0.75,
+before-fix,16777216,1.00,
+before-fix,33554432,1.50,
+before-fix,67108864,2.50,
+after-fix,32768,0.26,<0.01
+after-fix,65536,0.27,<0.01
+after-fix,131072,0.27,<0.01
+after-fix,262144,0.62,<0.01
+after-fix,524288,0.61,<0.01
+after-fix,1048576,0.61,<0.01
+after-fix,2097152,0.61,<0.01
+after-fix,4194304,0.61,<0.01
+after-fix,8388608,0.62,<0.01
+after-fix,16777216,0.63,<0.01
+after-fix,33554432,0.90,0.013
+after-fix,67108864,2.20,0.042

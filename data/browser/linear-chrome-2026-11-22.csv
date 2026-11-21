@@ -1,0 +1,17 @@
+# Naive linear-stride walk, live, Chrome, Apple A18 Pro, started by hand.
+# Settings: 32 KB to 64 MB, 3 runs per window. Copied from the page's table.
+# Built from d6b2556 (clock-rounding fix, no warm-up yet): the first window
+# reading high (0.57 vs 0.48 ns) is consistent with the missing warm-up.
+window_bytes,ns_per_access,resolution_ns
+32768,0.57,<0.01
+65536,0.48,<0.01
+131072,0.48,<0.01
+262144,0.76,<0.01
+524288,0.76,<0.01
+1048576,0.75,<0.01
+2097152,0.75,<0.01
+4194304,0.75,<0.01
+8388608,0.74,<0.01
+16777216,0.76,<0.01
+33554432,1.04,<0.01
+67108864,2.23,0.025

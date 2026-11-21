@@ -50,7 +50,18 @@ export function measureLinear(bytes, windowBytes, steps) {
 // `targetMs` (optional): grow each window's step count until a run lasts that
 // long. At a fixed 4M steps a ~0.5 ns walk lasts 2 ms, which is two ticks of a
 // 1 ms clock, so every reading came out a multiple of 0.25 ns.
-export function* sweepLinear({ bytes, sizes, repeats = 3, steps: fixedSteps = 4_000_000, targetMs = 0, quantumMs = 0 }) {
+//
+// `warmupMs`: walk for this long before recording anything. The first few
+// calls run measurably slower (2.75 → 0.68 ns over 12 calls in Chrome) while
+// the JIT optimises the loop and the CPU ramps up its clock or the OS moves
+// the thread to a faster core, which made the first window read high.
+export function* sweepLinear({ bytes, sizes, repeats = 3, steps: fixedSteps = 4_000_000, targetMs = 0, quantumMs = 0, warmupMs = 0 }) {
+  if (warmupMs > 0 && typeof performance !== 'undefined') {
+    const t0 = performance.now();
+    const w = sizes[0];
+    while (performance.now() - t0 < warmupMs) measureLinear(bytes, w, 1_000_000);
+    yield { phase: 'warmup' };
+  }
   const results = [];
   for (const windowBytes of sizes) {
     const runs = [];

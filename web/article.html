@@ -61,7 +61,7 @@
   <div class="tablewrap"><table style="min-width:600px">
     <tr><th>Claim</th><th>Evidence</th><th>Strength</th></tr>
     <tr><td>Timing a dependent-load chain with a coarse browser clock reveals the cache hierarchy</td><td>Captured sweep in <code>data/cache/fixtures.json</code> (79× range); live mode on your machine</td><td>Shipped · one machine</td></tr>
-    <tr><td>A linear-stride walk shows a flat line instead, across the cache sizes</td><td>Captured sweep, same machine and date (0.55–0.88 ns); native four-way test separates the causes; native stream sweep shows a gentle rise past 16 MB</td><td>Shipped · causes measured natively (§2, §6)</td></tr>
+    <tr><td>A linear-stride walk hides the latency hierarchy (it shows only much smaller bandwidth steps)</td><td>Chrome capture: 1.6× spread incl. a 1.4× L1 step; Safari and warmed Chrome runs: 2–3× steps; <code>native/bandwidth.c</code> reproduces them, and a slowed loop makes them vanish; native four-way test separates the causes</td><td>Shipped · one machine; tested by prediction (§2, §6)</td></tr>
     <tr><td>Boundaries match the published cache sizes</td><td>Browser power-of-two sweep; native sweep at 4 points per octave on both core clusters</td><td>Shipped · L1 and L2 edges match on both clusters (§6)</td></tr>
     <tr><td>Two threads can pass a message through cache/memory contention</td><td>Browser live mode (my run decoded <code>cache</code> intact); <strong>Save trace</strong> now exports any run</td><td>Reported for the browser · see the native row below</td></tr>
     <tr><td>Two <em>separate processes</em> can, with no shared start time</td><td>Native <code>channel</code>: 100-run batch and example traces in <code>data/native/</code></td><td>Shipped · 39/40 clean runs on default scheduling (§6)</td></tr>
@@ -193,10 +193,12 @@ for (let i = 0; i &lt; steps; i++) {
 }</code></pre>
 
   <p>
-    Run it and the curve comes out <strong>flat</strong>. In the captured run
-    shipped with the demo it reads 0.55–0.88 ns per access everywhere from 16 KB
-    to 32 MB: a range of just 1.6× across a 2,000-fold change in working-set size.
-    The pointer chase on the same machine, the same day, spans 79×.
+    Run it and the curve comes out <strong>nearly flat</strong>. In the
+    captured run shipped with the demo it reads 0.55–0.88 ns per access from
+    16 KB to 32 MB: a range of just 1.6× across a 2,000-fold change in
+    working-set size. The pointer chase on the same machine, the same day, spans
+    79×. ("Nearly", because there is a small real step at the L1 edge; see the
+    update below.)
   </p>
 
   <figure>
@@ -246,7 +248,7 @@ for (let i = 0; i &lt; steps; i++) {
   <text x="282.7" y="188.6" style="font:10px sans-serif;fill:var(--accent)">L1 edge: somewhere in 128–256 KB (5×)</text>
   <text x="684.0" y="74.9" text-anchor="end" style="font:10px sans-serif;fill:var(--accent)">83 ns @ 64 MB</text>
   <text x="300" y="148" style="font:600 11px sans-serif;fill:var(--accent)">pointer chase (dependent loads)</text>
-  <text x="328.3" y="259.5" style="font:600 11px sans-serif;fill:var(--err)">linear stride — flat, 0.55–0.88 ns, 16 KB → 32 MB</text>
+  <text x="328.3" y="259.5" style="font:600 11px sans-serif;fill:var(--err)">linear stride — nearly flat, 0.55–0.88 ns, 16 KB → 32 MB</text>
 </svg></div>
     <div class="fig-hint" aria-hidden="true">swipe to pan →</div>
     <figcaption>
@@ -289,42 +291,120 @@ for (let i = 0; i &lt; steps; i++) {
     plausibly pull from DRAM. So even at 32 MB that walk is mostly served from
     on-chip caches; the sweep never really tests DRAM. What the comparison
     <em>does</em> show cleanly is the first edge: between 128 and 256 KB the pointer
-    chase jumps 5×, and the linear walk doesn't move at all.
+    chase jumps 5×, while the linear walk moves only 1.4× (0.55 → 0.79 ns; the
+    two windows' five repeats don't overlap, so even that small step is real).
   </p>
 
-  <h3>Update: past 32 MB, and a clock-rounding bug</h3>
+  <h3>Update: what Safari showed me</h3>
   <p>
-    I later ran the naive walk live up to 64 MB in Safari, whose clock ticks
-    about once a millisecond, and it wasn't flat: 0.25–0.75 ns at small sizes,
-    then 1.0, 1.5 and 2.5 ns at 16, 32 and 64 MB. Two different things were
-    going on.
+    I later ran the naive walk live in Safari, and it wasn't flat. Two
+    different things were going on.
   </p>
+  <p>
+    <strong>First, clock rounding.</strong> Safari's
+    <code>performance.now()</code> ticks about once a millisecond. The walk
+    timed a fixed 4 million accesses, and 0.25 ns × 4M = 1 ms, so every
+    reading was a whole number of ticks (multiples of 0.25 ns). At the small
+    sizes each sample was only 1–3 ticks long, and the detector turned one
+    extra tick (0.25 → 0.50 ns) into a "~64 KB" cache edge. Both live sweeps
+    now grow their step count until each run lasts about 50 clock ticks (at
+    least 10 ms). Each reading records its resolution, the table shows it as
+    ±, and the detector ignores any jump smaller than three ticks. There are
+    regression tests built from that run.
+  </p>
+  <p>
+    <strong>Second, real bandwidth steps.</strong> With the rounding fixed,
+    Safari still showed steps, now resolved to better than 0.01 ns
+    (<code>data/browser/linear-safari-2026-11-22.csv</code>), and a Chrome run
+    showed them too (<code>linear-chrome-2026-11-22.csv</code>). The new
+    <code>native/bandwidth.c</code> runs the same straight walk in C at about
+    one cycle per line, both read-only and read-modify-write like the JS loop
+    (<code>data/native/bandwidth-qos-p.csv</code>, P cores, on battery):
+  </p>
+  <div class="tablewrap"><table style="min-width:520px">
+    <tr><th>Window</th><th>Safari (JS)</th><th>Chrome (JS)</th><th>C, read-modify-write</th><th>C, read only</th></tr>
+    <tr><td>64–128 KB (L1)</td><td class="num">0.27</td><td class="num">0.48</td><td class="num">0.20</td><td class="num">0.11</td></tr>
+    <tr><td>256 KB–16 MB (L2)</td><td class="num">0.61–0.63</td><td class="num">0.74–0.76</td><td class="num">0.61–0.65</td><td class="num">0.49–0.56</td></tr>
+    <tr><td>32 MB</td><td class="num">0.90</td><td class="num">1.04</td><td class="num">0.92</td><td class="num">0.85</td></tr>
+    <tr><td>64 MB</td><td class="num">2.20</td><td class="num">2.23</td><td class="num">2.24</td><td class="num">1.09</td></tr>
+  </table></div>
+  <p>
+    The read-modify-write column matches Safari closely. My reading: these are
+    bandwidth limits, how fast each level can deliver lines, not how long a
+    single read waits. The read-only column suggests writing every line back
+    roughly doubles the cost once the walk reaches DRAM.
+  </p>
+
+  <h3>Trying to break that explanation</h3>
+  <p>
+    A close numerical match could be a coincidence, so I tested a prediction
+    that would fail if I'm wrong. If the steps are bandwidth limits, a loop that
+    runs <em>slower</em> than a level can deliver should stop seeing that level's
+    step. <code>bandwidth --pad N</code> adds N dependent multiplies per line,
+    which sets a floor on the loop's speed without touching memory (P cores):
+  </p>
+  <div class="tablewrap"><table style="min-width:520px">
+    <tr><th>Padding</th><th>Loop floor</th><th>≤128 KB → 256 KB</th><th>16 MB → 64 MB</th></tr>
+    <tr><td>none</td><td class="num">~0.2 ns</td><td class="num">0.20 → 0.60 (3.0×)</td><td class="num">0.64 → 2.07</td></tr>
+    <tr><td>1</td><td class="num">~1.0 ns</td><td class="num">1.00 → 1.00 (gone)</td><td class="num">1.00 → 2.11</td></tr>
+    <tr><td>2</td><td class="num">~2.0 ns</td><td class="num">1.99 → 1.99 (gone)</td><td class="num">1.99 → 2.06</td></tr>
+    <tr><td>4</td><td class="num">~4.0 ns</td><td class="num">3.96 → 3.97 (gone)</td><td class="num">3.97 → 4.09</td></tr>
+  </table></div>
+  <p>
+    Each step vanishes exactly when the loop gets slower than that level's
+    delivery time, so the prediction held. The browser runs fall on the same
+    trend: the faster the loop in L1, the bigger the L1 step. Safari at
+    0.27 ns saw 2.3×, Chrome at 0.48 ns saw 1.6×, the old Chrome capture at
+    0.55 ns saw 1.4×. Meanwhile the 64 MB reading sits at 2.2 ns in every run
+    whose loop is faster than that, which is what a fixed memory speed limit
+    should look like. That also explains
+    <code>chase.c</code>'s <code>stream</code> mode reading flat at 0.77 ns up
+    to 16 MB: its loop costs about 3 cycles per line.
+  </p>
+  <p>
+    <strong>What I got wrong on the way.</strong> I first wrote that Chrome's
+    loop is too slow to show the steps. You can check that it isn't: a
+    warmed-up Chrome run on the P cores read 0.39 ns per line in L1, 0.71 in
+    L2, 1.11 at 32 MB and 2.48 at 64 MB, the same steps as Safari. I'd
+    generalised from one old capture. That capture's loop was slower (0.55 ns
+    in L1), so its L1 step was only 1.4×, and the detector's "less than 3×
+    total spread" rule called it flat. I don't know for sure why it was slower.
+    One candidate I did observe: in Chrome, repeated 4M-step calls on the same
+    window got steadily faster (2.75 → 0.68 ns over twelve calls). That looks
+    like the JIT optimising the loop plus the CPU ramping its clock or moving
+    the thread to a P core, and the old sweep had no warm-up. The live sweep
+    now walks for 400 ms before recording anything.
+  </p>
+  <p>
+    <strong>A false positive, and a guard.</strong> Runs where the browser's
+    workers landed on the efficiency cores read 2–7 ns per line and were noisy.
+    One of them "found" a 1.55× step at 32 KB that its own repeats didn't
+    support, and the next two runs didn't show it. A step now only counts if the
+    two windows' fastest-to-slowest repeat ranges don't overlap. Every step in
+    the shipped captures and the Safari run passes that check; the false one
+    wouldn't have.
+  </p>
+  <p>
+    So the claim I'm comfortable making: a straight walk hides
+    <em>latency</em>, which is why it can't see the 80× hierarchy. It still sees
+    <em>bandwidth</em>, whose steps are 2–3× each, and you notice them when the
+    loop runs faster than the cache can deliver: Safari and warmed-up Chrome on
+    the P cores both do.
+  </p>
+  <p><strong>Still open:</strong></p>
   <ul>
-    <li><strong>The small-size wobble was clock rounding.</strong> Every
-    reading was a multiple of 0.25 ns, because the walk timed a fixed 4 million
-    accesses: 0.25 ns × 4M = 1 ms, exactly one tick. So at the small sizes each
-    sample spanned only 1–3 ticks, and the detector turned a one-tick step (0.25 → 0.50 ns)
-    into a "~64 KB" cache edge. Both live sweeps now grow their step count
-    until each run lasts about 50 clock ticks (at least 10 ms). Each reading
-    records its resolution, the table shows it as ±, and the detector ignores
-    a jump smaller than three ticks. There are regression tests built from
-    that run.</li>
-    <li><strong>The rise past 16 MB is real.</strong> Past the on-chip caches
-    the walk has to stream from DRAM, and prefetching can hide latency but not
-    bandwidth. The native <code>stream</code> pattern (plain loads, nanosecond
-    clock, P cores) shows the same shape: a flat 0.77 ns per line from 32 KB to
-    16 MB, then 0.86–1.15 ns at 32 MB, 0.97–1.36 ns at 64 MB and 1.0–1.27 ns at
-    128 MB across two runs (<code>data/native/stream-sweep-qos-p.csv</code>).
-    That's 1.3–1.8×, against the pointer chase's ~80×. The browser's rise was
-    bigger (3.3×). One untested guess: its loop does read-modify-write
-    (<code>&amp;= 1</code>), so dirty lines also have to be written back, which
-    roughly doubles the memory traffic.</li>
+    <li>Exactly why the old Chrome capture's loop was slower. A cold-versus-warm
+    comparison in the same Chrome version would settle it.</li>
+    <li>The writeback explanation for the DRAM step rests on one read-only vs
+    read-modify-write comparison in C. A write-only walk would separate "writes
+    cost bandwidth" from "my rmw loop is structured differently".</li>
+    <li>Everything here is one machine (A18 Pro). On a chip whose L2 is faster
+    relative to its core, the L1 step could be smaller or missing even with a
+    fast loop.</li>
+    <li>Safari's run is a single sweep. I haven't checked how stable its steps
+    are across reruns, or which core it ran on, beyond the edge sitting at
+    128 KB (the P cores' L1 size; the E cores' is 64 KB).</li>
   </ul>
-  <p>
-    So the fair statement is: the linear walk is flat across the cache sizes,
-    then rises gently once it reaches main memory. The original capture stopped
-    at 32 MB, which is why it never showed that.
-  </p>
 
   <div class="callout warn">
     <p>

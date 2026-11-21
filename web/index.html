@@ -562,7 +562,7 @@ a.next:hover .arr { transform: translateY(3px); }
   <text x="282.7" y="188.6" style="font:10px sans-serif;fill:var(--accent)">L1 edge: somewhere in 128–256 KB (5×)</text>
   <text x="684.0" y="74.9" text-anchor="end" style="font:10px sans-serif;fill:var(--accent)">83 ns @ 64 MB</text>
   <text x="300" y="148" style="font:600 11px sans-serif;fill:var(--accent)">pointer chase (dependent loads)</text>
-  <text x="328.3" y="259.5" style="font:600 11px sans-serif;fill:var(--err)">linear stride — flat, 0.55–0.88 ns, 16 KB → 32 MB</text>
+  <text x="328.3" y="259.5" style="font:600 11px sans-serif;fill:var(--err)">linear stride — nearly flat, 0.55–0.88 ns, 16 KB → 32 MB</text>
 </svg></div>
     <div class="fig-hint" aria-hidden="true">swipe to pan →</div>
     <figcaption>
@@ -591,28 +591,48 @@ a.next:hover .arr { transform: translateY(3px); }
   </ul>
 
   <details class="more">
-    <summary>Ran it live and your naive curve isn't perfectly flat? <span class="hint">2 min</span></summary>
+    <summary>Ran it live in Safari and saw a couple of steps? <span class="hint">2 min</span></summary>
     <div class="more-body">
-      <p>Good catch, I hit this too. There were two separate things going on.</p>
       <p>
-        <strong>Wobbles at small sizes were the clock.</strong> Safari and
-        Firefox only tick <code>performance.now()</code> about once a
-        millisecond, and my old code timed each sample for just a couple of
-        ticks. So every reading landed on a multiple of 0.25 ns, and a "2× jump"
-        from 0.25 to 0.50 ns was literally one extra tick. The detector even
-        reported a fake 64 KB cache from it. Now every sample is stretched to
-        about 50 ticks, the table shows each reading's ± next to it, and the
-        detector ignores any jump smaller than a few ticks.
+        Good catch. I did too, and it took me a while to work out. Those steps
+        are real, but they're measuring something different from Act 1.
       </p>
       <p>
-        <strong>A rise past ~16–32 MB is real.</strong> Once the data stops
-        fitting in any cache on the chip, the walk has to stream it from main
-        memory, and memory can only deliver so many bytes per second.
-        Prefetching hides the <em>waiting</em>; it can't beat that speed limit.
-        My native C version (nanosecond clock, no rounding) sees it too: flat at
-        about 0.77 ns per line up to 16 MB, then roughly 0.9–1.4 ns from 32 to
-        128 MB. That's a gentle slope, nothing like the pointer chase climbing
+        A pointer chase measures <strong>how long one read waits</strong>. In
+        a straight walk the prefetcher hides that wait, so what's left is
+        <strong>how fast each level can deliver data</strong>: its bandwidth.
+        Bandwidth has steps too. L2 can't feed the core as fast as L1, and
+        main memory is slower again. You only notice them if the loop is quick
+        enough to run into those limits.
+      </p>
+      <p>
+        Whether you notice them depends on how fast the loop runs. Warmed up
+        on a performance core, both Safari and Chrome get it well under a
+        nanosecond per line (0.27 ns in my Safari run, 0.39–0.48 ns in Chrome),
+        so both show the steps: about 0.3–0.5 ns while the data fits in L1 (up
+        to 128 KB), about 0.6–0.75 ns from L2, and 2.2–2.5 ns from main memory
+        at 64 MB. The slower the loop, the smaller the L1 step: 2.3× in
+        Safari, 1.6× in Chrome.
+      </p>
+      <p>
+        I checked by writing the same walk in C. It reproduces the Safari
+        numbers almost exactly, and when I deliberately slow the C loop down to
+        about 1 ns per line, the L1 step disappears completely. Even so, each
+        step is only 2–3× (about 8× end to end), while the pointer chase climbs
         about 80× over the same sizes.
+      </p>
+      <p>
+        Full disclosure: my original Chrome capture ran the loop slower
+        (0.55 ns in L1), so its L1 step was only 1.4× and I called the curve
+        flat. My first explanation was "Chrome's loop is slower", and that
+        turned out to be wrong. My best guess now is that those samples were
+        too short to let the CPU warm up, so the tool now warms up for 400 ms
+        before measuring.
+      </p>
+      <p class="panel-hint">
+        One more gotcha I hit on the way: Safari's clock only ticks once a
+        millisecond, so the tool now stretches every sample to about 50 ticks
+        and shows each reading's ± in the table.
       </p>
     </div>
   </details>
