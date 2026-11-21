@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How it works — reading a CPU cache with a stopwatch</title>
-<meta property="og:title" content="How it works — reading a CPU cache with a stopwatch">
-<meta name="description" content="A from-scratch explainer: the memory-speed gap, pointer chasing vs the prefetcher, how the channel is framed and decoded, and what the evidence does and does not show.">
+<title>Lab notes — the evidence behind the cache lesson</title>
+<meta property="og:title" content="Lab notes — the evidence behind the cache lesson">
+<meta name="description" content="Lab notes behind the lesson: the code, the captured data, how the live channel adapts to each chip, a native C version between processes, and what the evidence does and does not show.">
 <meta name="theme-color" content="#080b12">
 <meta name="color-scheme" content="dark">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="cache-covert-channel">
-<meta property="og:description" content="A from-scratch explainer: the memory-speed gap, pointer chasing vs the prefetcher, how the channel is framed and decoded, and what the evidence does and does not show.">
+<meta property="og:description" content="Lab notes behind the lesson: the code, the captured data, how the live channel adapts to each chip, a native C version between processes, and what the evidence does and does not show.">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%23080b12%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22%2322d3ee%22%2F%3E%3Crect%20x%3D%2217%22%20y%3D%2217%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22%23c04cff%22%2F%3E%3Crect%20x%3D%2217%22%20y%3D%226%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22none%22%20stroke%3D%22%2322d3ee%22%20stroke-width%3D%221.5%22%20opacity%3D%22.5%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%2217%22%20width%3D%229%22%20height%3D%229%22%20rx%3D%221.5%22%20fill%3D%22none%22%20stroke%3D%22%23c04cff%22%20stroke-width%3D%221.5%22%20opacity%3D%22.5%22%2F%3E%3C%2Fsvg%3E">
 <style>
@@ -314,6 +314,43 @@ footer.site code { background: var(--panel-2); }
 
 .lede { font-size: clamp(17px, 1.9vw, 19px); line-height: 1.65; color: #dfe8f2; }
 
+/* ---- figures, code and asides (shared by the lesson and the lab notes) ---- */
+.prose figure { margin: 28px 0; }
+.prose figure .fig {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.prose figure svg { width: 100%; min-width: 560px; height: auto; display: block; }
+.prose figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; text-align: center; text-wrap: pretty; }
+.fig-hint { display: none; font: 600 11px/1 var(--mono); color: var(--muted); text-align: right; margin-top: 6px; letter-spacing: .06em; }
+@media (max-width: 600px) { .fig-hint { display: block; } }
+pre.code {
+  background: #0a1019; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; font-family: var(--mono); font-size: 13px;
+  line-height: 1.6; margin: 8px 0 18px; tab-size: 2;
+}
+pre.code code { background: none; border: 0; padding: 0; color: var(--text); font-size: inherit; overflow-wrap: normal; }
+pre.code .cm { color: var(--muted); }
+pre.code b { color: var(--accent); font-weight: 600; }
+.filetag { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 20px 0 0; }
+.keyidea { border: 1px solid rgba(55,243,154,0.22); border-left: 3px solid var(--ok); background: linear-gradient(90deg, rgba(55,243,154,0.06), rgba(55,243,154,0.01)); padding: 16px 18px; margin: 24px 0; border-radius: 10px; font-size: 15px; }
+.keyidea p:last-child { margin-bottom: 0; }
+
+/* Collapsible "go deeper" blocks: optional detail stays one tap away
+   instead of interrupting the main reading path. */
+details.more { border: 1px solid var(--line); border-radius: 10px; background: rgba(13,19,29,0.6); margin: 18px 0; }
+details.more > summary {
+  cursor: pointer; list-style: none; padding: 13px 16px; font-weight: 600; color: var(--text-hi);
+  display: flex; align-items: center; gap: 10px; border-radius: 10px;
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before { content: "+"; font: 700 15px/1 var(--mono); color: var(--accent); width: 14px; flex: none; }
+details.more[open] > summary::before { content: "−"; }
+details.more > summary:hover { background: rgba(34,211,238,0.05); }
+details.more > summary .hint { margin-left: auto; font: 500 12px/1 var(--mono); color: var(--muted); }
+details.more > .more-body { padding: 4px 18px 6px; border-top: 1px solid var(--line); }
+details.more > .more-body > :first-child { margin-top: 14px; }
+
 footer.site { border-top: 1px solid var(--line); margin-top: 24px; background: rgba(7,10,16,0.6); }
 .footer-inner { max-width: var(--maxw); margin: 0 auto; padding: 28px var(--gutter) 36px; color: var(--muted); font-size: 14px; }
 .footer-inner p { margin: 0 0 6px; max-width: 760px; }
@@ -347,32 +384,14 @@ footer.site { border-top: 1px solid var(--line); margin-top: 24px; background: r
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 }
 
-.prose figure { margin: 28px 0; }
-.prose figure .fig {
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
-}
-.prose figure svg { width: 100%; min-width: 560px; height: auto; display: block; }
-.prose figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; text-align: center; text-wrap: pretty; }
-.fig-hint { display: none; font: 600 11px/1 var(--mono); color: var(--muted); text-align: right; margin-top: 6px; letter-spacing: .06em; }
-@media (max-width: 600px) { .fig-hint { display: block; } }
-pre.code {
-  background: #0a1019; border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 14px 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; font-family: var(--mono); font-size: 13px;
-  line-height: 1.6; margin: 8px 0 18px; tab-size: 2;
-}
-pre.code code { background: none; border: 0; padding: 0; color: var(--text); font-size: inherit; overflow-wrap: normal; }
-pre.code .cm { color: var(--muted); }
-pre.code b { color: var(--accent); font-weight: 600; }
-.filetag { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 20px 0 0; }
 .tocbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 28px 0 8px; }
 .tocbar a {
   font: 500 13px/1 var(--sans); text-transform: none; letter-spacing: 0; color: var(--text);
   padding: 8px 12px; border: 1px solid var(--line-2); border-radius: 999px; text-decoration: none; background: rgba(13,19,29,.7);
 }
 .tocbar a:hover { border-color: var(--accent); color: var(--accent); }
-.keyidea { border: 1px solid rgba(55,243,154,0.22); border-left: 3px solid var(--ok); background: linear-gradient(90deg, rgba(55,243,154,0.06), rgba(55,243,154,0.01)); padding: 16px 18px; margin: 24px 0; border-radius: 10px; font-size: 15px; }
-.keyidea p:last-child { margin-bottom: 0; }
+.backs { margin: -0.4em 0 1.4em !important; font: 600 12px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted) !important; }
+.backs a { text-decoration: none !important; }
 </style>
 </head>
 <body>
@@ -381,9 +400,8 @@ pre.code b { color: var(--accent); font-weight: 600; }
   <div class="sitenav-inner">
     <a class="brand" href="index.html" aria-label="cache-covert-channel home"><span class="logo" aria-hidden="true"></span><span class="brand-text">cache-covert-channel</span></a>
     <div class="navlinks">
-      <a href="index.html">Overview</a>
-      <a href="cache.html">Live demo</a>
-      <a href="article.html" class="on" aria-current="page">How it works</a>
+      <a href="index.html">The lesson</a>
+      <a href="article.html" class="on" aria-current="page">Lab notes</a>
     </div>
     <a class="ghlink" href="https://github.com/CalebChadz/cache-covert-channel" target="_blank" rel="noopener" aria-label="Source on GitHub"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>GitHub</span></a>
   </div>
@@ -392,17 +410,19 @@ pre.code b { color: var(--accent); font-weight: 600; }
 <main id="main">
 
 <header class="page">
-  <h1>How it works: reading a CPU cache with a stopwatch</h1>
-  <p>A from-scratch tour of what the demo measures, how it measures it, what evidence backs each claim — and what it does not show</p>
+  <span class="eyebrow">Companion to the lesson</span>
+  <h1>Lab notes: the evidence behind the lesson</h1>
+  <p>The code, the data and the engineering behind each act — what every claim rests on, and what it does not show</p>
 </header>
 
 <div class="prose">
   <p class="lede">
-    This is the explainer for the <a href="cache.html">live demo</a>.
-    That page lets you run the experiment; this one teaches the ideas behind it,
-    starting from "what is a cache" and ending at two threads passing a message through nothing but contention for shared hardware. No security background assumed. If
-    you can read a few lines of JavaScript, you can follow all of it — and, if you
-    like, reproduce it yourself from the code in this repository.
+    <a href="index.html">The lesson</a> teaches the idea in four acts. These
+    notes are the lab notebook behind it: the code, the measurements, the bugs
+    found along the way, and how strongly the evidence supports each claim.
+    They assume you've been through the lesson, or already know what a cache
+    is. Each section says which act it backs, so you can dip in where you're
+    curious rather than read top to bottom.
   </p>
 
   <div class="keyidea">
@@ -418,7 +438,7 @@ pre.code b { color: var(--accent); font-weight: 600; }
   </div>
 
 
-  <h2 id="claims">What this article claims, and how strong the evidence is</h2>
+  <h2 id="claims">What these notes claim, and how strong the evidence is</h2>
   <p>
     Read the rest with this table in mind. "Shipped" means the data or code is in
     this repository and you can check it yourself; "reported" means I observed it
@@ -428,168 +448,30 @@ pre.code b { color: var(--accent); font-weight: 600; }
   <div class="tablewrap"><table style="min-width:600px">
     <tr><th>Claim</th><th>Evidence</th><th>Strength</th></tr>
     <tr><td>Timing a dependent-load chain with a coarse browser clock reveals the cache hierarchy</td><td>Captured sweep in <code>data/cache/fixtures.json</code> (79× range); live mode on your machine</td><td>Shipped · one machine</td></tr>
-    <tr><td>A linear-stride walk shows a flat line instead</td><td>Captured sweep, same machine and date (0.55–0.88 ns); native four-way test separates the causes</td><td>Shipped · causes measured natively (Part 8)</td></tr>
-    <tr><td>Boundaries match the published cache sizes</td><td>Browser power-of-two sweep; native sweep at 4 points per octave on both core clusters</td><td>Shipped · L1 and L2 edges match on both clusters (Part 8)</td></tr>
-    <tr><td>Two threads can pass a message through cache/memory contention</td><td>Browser live mode (author's run decoded <code>cache</code> intact); <strong>Save trace</strong> now exports any run</td><td>Reported for the browser · see the native row below</td></tr>
-    <tr><td>Two <em>separate processes</em> can, with no shared start time</td><td>Native <code>channel</code>: 100-run batch and example traces in <code>data/native/</code></td><td>Shipped · 39/40 clean runs on default scheduling (Part 8)</td></tr>
+    <tr><td>A linear-stride walk shows a flat line instead</td><td>Captured sweep, same machine and date (0.55–0.88 ns); native four-way test separates the causes</td><td>Shipped · causes measured natively (§6)</td></tr>
+    <tr><td>Boundaries match the published cache sizes</td><td>Browser power-of-two sweep; native sweep at 4 points per octave on both core clusters</td><td>Shipped · L1 and L2 edges match on both clusters (§6)</td></tr>
+    <tr><td>Two threads can pass a message through cache/memory contention</td><td>Browser live mode (my run decoded <code>cache</code> intact); <strong>Save trace</strong> now exports any run</td><td>Reported for the browser · see the native row below</td></tr>
+    <tr><td>Two <em>separate processes</em> can, with no shared start time</td><td>Native <code>channel</code>: 100-run batch and example traces in <code>data/native/</code></td><td>Shipped · 39/40 clean runs on default scheduling (§6)</td></tr>
     <tr><td>The replay and the "defence dial" show how noise affects the channel</td><td>Seeded simulation in <code>channel-sim.js</code></td><td>Illustration, not measurement</td></tr>
     <tr><td>This kind of channel survives VM isolation</td><td>Published cross-VM research; native test covers separate processes, not VMs</td><td>Processes: shipped · VMs: argued</td></tr>
   </table></div>
 
   <nav class="tocbar" aria-label="Contents">
-    <span>Jump to</span>
+    <span>Contents</span>
     <a href="#claims">claims &amp; evidence</a>
-    <a href="#part1">the memory-speed gap</a>
-    <a href="#part2">hits, misses &amp; timing</a>
-    <a href="#part3">measuring the hierarchy</a>
-    <a href="#part4">the plot twist</a>
-    <a href="#part5">the fix</a>
-    <a href="#part6">reality check</a>
-    <a href="#part7">the covert channel</a>
-    <a href="#part8">native results</a>
-    <a href="#part9">replicate it</a>
+    <a href="#measuring">1 · measuring</a>
+    <a href="#twist">2 · the plot twist</a>
+    <a href="#fix">3 · the fix</a>
+    <a href="#reality">4 · reality check</a>
+    <a href="#channel">5 · the covert channel</a>
+    <a href="#native">6 · native results</a>
+    <a href="#replicate">7 · replicate it</a>
     <a href="#refs">further reading</a>
   </nav>
 
   <!-- ============================================================ -->
-  <h2 id="part1">Part 1 — Why computers need a cache at all</h2>
-
-  <p>
-    A modern CPU can do a few billion operations a second. Each operation usually
-    needs a piece of data, and most data lives in main memory (RAM). Here is the
-    uncomfortable fact the whole story hangs on: <strong>the CPU is far faster
-    than the memory it reads from.</strong> Fetching a value from RAM can take the
-    processor the equivalent of a couple of hundred wasted cycles — hundreds of
-    ticks of doing nothing but waiting. This is called the <em>memory-speed
-    gap</em>, and it has been getting wider for decades.
-  </p>
-
-  <p>
-    An analogy. Imagine a chef who can chop and stir almost instantly, but whose
-    ingredients are stored in a warehouse a ten-minute drive away. It doesn't
-    matter how fast the chef is; if every carrot requires a round trip to the
-    warehouse, the kitchen crawls. The obvious fix is to keep the ingredients you
-    are using <em>right now</em> on the counter, the ones you'll need soon in the
-    fridge, and only the bulk supply in the warehouse. That is exactly what a CPU
-    cache is: a small, very fast store of memory physically close to the
-    processor, holding copies of the data it is most likely to need next.
-  </p>
-
-  <p>
-    Caches work because real programs are predictable in two ways. They tend to
-    reuse the same data soon after using it (<em>temporal locality</em>), and they
-    tend to use data that sits near data they just used (<em>spatial locality</em>).
-    So the hardware keeps recently-touched memory close, and it fetches memory in
-    small blocks — a <strong>cache line</strong>, usually 64 bytes — rather than
-    one byte at a time, betting you'll want the neighbours too.
-  </p>
-
-  <h3>The hierarchy: smaller is faster</h3>
-
-  <p>
-    You can't have it all. Fast memory is expensive and physically has to be tiny
-    and close to the core; big memory is cheap but far away and slow. So chips
-    build a <em>hierarchy</em> — several caches of increasing size and decreasing
-    speed — and let data fall through it. The counter, the fridge, the pantry, the
-    warehouse.
-  </p>
-
-  <figure>
-    <div class="fig"><svg viewBox="0 0 720 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pyramid of the memory hierarchy from CPU registers down to DRAM, showing size increasing and speed decreasing toward the bottom.">
-      <text x="360" y="26" text-anchor="middle" style="font:600 13px sans-serif;fill:var(--text)">The memory hierarchy</text>
-      <!-- pyramid rows: [y, half-width, label, size, speed] -->
-      <!-- row 1 registers -->
-      <polygon points="330,44 390,44 400,80 320,80" style="fill:var(--accent);opacity:0.92"/>
-      <text x="360" y="67" text-anchor="middle" style="font:600 11px sans-serif;fill:#fff">registers</text>
-      <!-- row 2 L1 -->
-      <polygon points="318,82 402,82 416,124 304,124" style="fill:var(--accent);opacity:0.72"/>
-      <text x="360" y="108" text-anchor="middle" style="font:600 12px sans-serif;fill:#fff">L1 cache</text>
-      <!-- row 3 L2 -->
-      <polygon points="302,126 418,126 436,174 284,174" style="fill:var(--accent);opacity:0.55"/>
-      <text x="360" y="155" text-anchor="middle" style="font:600 12px sans-serif;fill:#fff">L2 cache</text>
-      <!-- row 4 SLC / last-level -->
-      <polygon points="282,176 438,176 460,232 260,232" style="fill:var(--accent);opacity:0.38"/>
-      <text x="360" y="209" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">L3 / system-level cache (SLC)</text>
-      <!-- row 5 DRAM -->
-      <polygon points="258,234 462,234 490,300 230,300" style="fill:var(--line);opacity:0.9"/>
-      <text x="360" y="271" text-anchor="middle" style="font:600 12px sans-serif;fill:var(--text)">main memory (DRAM)</text>
-      <!-- left axis: size -->
-      <text x="150" y="60" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~1 KB</text>
-      <text x="150" y="108" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">tens of KB</text>
-      <text x="150" y="155" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">a few MB</text>
-      <text x="150" y="207" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">tens of MB</text>
-      <text x="150" y="271" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">many GB</text>
-      <text x="150" y="330" text-anchor="middle" style="font:600 10px sans-serif;fill:var(--muted)">SIZE ↑</text>
-      <!-- right axis: speed -->
-      <text x="585" y="60" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">&lt;1 ns</text>
-      <text x="585" y="108" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~1 ns</text>
-      <text x="585" y="155" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~5 ns</text>
-      <text x="585" y="207" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~10–30 ns</text>
-      <text x="585" y="271" text-anchor="middle" style="font:11px sans-serif;fill:var(--muted)">~80+ ns</text>
-      <text x="585" y="330" text-anchor="middle" style="font:600 10px sans-serif;fill:var(--muted)">SLOWER ↓</text>
-    </svg></div>
-    <div class="fig-hint" aria-hidden="true">swipe to pan →</div>
-    <figcaption>
-      Each level down is bigger and slower. The nanosecond figures on the right
-      are rounded from the captured run in Part 4; your machine will differ, but
-      the <em>shape</em> is general.
-    </figcaption>
-  </figure>
-
-  <p>
-    L1 is tiny (tens of kilobytes) and answers in about a nanosecond. L2 is
-    larger and a few times slower. Below that sits a last-level cache — often
-    called the L3 or, on Apple silicon, a <em>system-level cache</em> (SLC) —
-    shared between cores and larger still. Miss all of those and you pay the full
-    trip to DRAM. When the CPU looks for a value, it checks each level in turn;
-    the first level that has it answers.
-  </p>
-
-  <!-- ============================================================ -->
-  <h2 id="part2">Part 2 — Hits, misses, and what timing tells you</h2>
-
-  <p>
-    When the data the CPU wants is already in a cache, that's a <strong>cache
-    hit</strong> — fast. When it isn't, that's a <strong>cache miss</strong>, and
-    the request falls to the next level down, costing more time. The deeper it has
-    to go, the longer you wait.
-  </p>
-
-  <figure>
-    <div class="fig"><svg viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two timelines comparing a fast cache hit against a slow cache miss that goes all the way to DRAM.">
-      <text x="360" y="24" text-anchor="middle" style="font:600 13px sans-serif;fill:var(--text)">One memory read: hit vs miss</text>
-      <!-- hit -->
-      <text x="20" y="76" style="font:12px sans-serif;fill:var(--text)">cache HIT</text>
-      <rect x="130" y="62" width="26" height="22" rx="3" style="fill:var(--ok)"/>
-      <text x="168" y="78" style="font:11px sans-serif;fill:var(--muted)">~1 ns — data is on the counter, CPU keeps working</text>
-      <!-- miss -->
-      <text x="20" y="140" style="font:12px sans-serif;fill:var(--text)">cache MISS</text>
-      <rect x="130" y="126" width="26" height="22" rx="3" style="fill:var(--ok)"/>
-      <rect x="158" y="126" width="430" height="22" rx="3" style="fill:var(--err);opacity:0.22"/>
-      <line x1="158" y1="126" x2="158" y2="148" style="stroke:var(--err);stroke-width:1"/>
-      <text x="373" y="141" text-anchor="middle" style="font:11px sans-serif;fill:var(--err)">~80 ns — CPU stalls, waiting on the trip to DRAM</text>
-      <!-- scale note -->
-      <text x="130" y="188" style="font:11px sans-serif;fill:var(--muted)">The green block (the check) is the same in both. The red is pure waiting — and it is roughly 80× longer.</text>
-      <text x="130" y="206" style="font:11px sans-serif;fill:var(--muted)">That size difference is the entire signal every experiment on this site depends on.</text>
-    </svg></div>
-    <div class="fig-hint" aria-hidden="true">swipe to pan →</div>
-    <figcaption>A hit and a miss differ by tens of nanoseconds — small in human terms, enormous and measurable in machine terms.</figcaption>
-  </figure>
-
-  <div class="keyidea">
-    <p>
-      <strong>The one idea to hold onto:</strong> the time a memory read takes
-      tells you <em>where the data was</em>. Fast means it was in a nearby cache;
-      slow means it had to come from far away. So a clock is secretly a probe into
-      the memory hierarchy. Nothing in a CPU offers an API that says "your L2 is 4
-      MB" — but the timing gives it away. Information leaking through a physical
-      property of the machine, rather than through an interface designed to
-      provide it, is what "side channel" means.
-    </p>
-  </div>
-
-  <!-- ============================================================ -->
-  <h2 id="part3">Part 3 — Measuring the hierarchy by timing</h2>
+  <h2 id="measuring">1 · Measuring the hierarchy by timing</h2>
+  <p class="backs">Backs <a href="index.html#measure">Act 1 · Measure</a></p>
 
   <p>
     Here is the plan, and it is beautifully simple. Take a chunk of memory of some
@@ -647,7 +529,7 @@ return ((t1 - t0) * 1e6) / steps;      <span class="cm">// total time / number o
     depends on the result of the one before, so the CPU cannot run ahead — it must
     finish read <em>N</em> before it even knows the address of read <em>N+1</em>.
     Every access therefore pays the true latency of wherever that slot currently
-    lives. (Why that matters so much is Part 4.) We don't time a single read —
+    lives. (Why that matters so much is §2.) We don't time a single read —
     the browser's clock is far too coarse for that — we time hundreds of thousands
     of them and divide, which is why a blunt clock is fine here.
   </p>
@@ -682,7 +564,8 @@ return ((t1 - t0) * 1e6) / steps;      <span class="cm">// total time / number o
   </p>
 
   <!-- ============================================================ -->
-  <h2 id="part4">Part 4 — The plot twist: the obvious version measures the wrong thing</h2>
+  <h2 id="twist">2 · The plot twist: the obvious version measures the wrong thing</h2>
+  <p class="backs">Backs <a href="index.html#fail">Act 2 · Fail</a></p>
 
   <p>
     The obvious way to walk a working set is a <strong>linear stride</strong>:
@@ -783,7 +666,7 @@ for (let i = 0; i &lt; steps; i++) {
     independent loads in random order (unprefetchable, but overlappable). Those
     aren't in the browser demo, so on its evidence alone the fair statement is
     "prefetching and/or overlapping hide the latency". The native version runs
-    all four combinations; the answer is in Part 8 (short version: both do). Note too that the
+    all four combinations; the answer is in §6 (short version: both do). Note too that the
     two loops differ in more than access order: one does read-modify-write on
     bytes, the other plain loads on 32-bit integers.
   </p>
@@ -817,10 +700,11 @@ for (let i = 0; i &lt; steps; i++) {
   </p>
 
   <!-- ============================================================ -->
-  <h2 id="part5">Part 5 — The fix: make every load wait for the last one</h2>
+  <h2 id="fix">3 · The fix: make every load wait for the last one</h2>
+  <p class="backs">Backs <a href="index.html#fail">Act 2 · Fail</a></p>
 
   <p>
-    The pointer chase from Part 3 defeats both effects at once. The next address
+    The pointer chase from §1 defeats both effects at once. The next address
     is whatever the current slot holds, and the slots were shuffled into a random
     cycle, so there's no pattern to prefetch. And because each load needs the
     previous one's result, nothing can overlap. Every access pays the full latency
@@ -843,12 +727,13 @@ for (let i = 0; i &lt; steps; i++) {
       milliseconds and divides by the number of loads. What coarsening <em>does</em>
       cost is speed. Every sample has to be long enough to swamp the clock's
       rounding, and that is exactly what limits the covert channel's bitrate in
-      Part 7. Coarsening slows the attack down; it doesn't stop it.
+      §5. Coarsening slows the attack down; it doesn't stop it.
     </p>
   </div>
 
   <!-- ============================================================ -->
-  <h2 id="part6">Part 6 — Reality check: does it match the real hardware?</h2>
+  <h2 id="reality">4 · Reality check: does it match the real hardware?</h2>
+  <p class="backs">Backs <a href="index.html#measure">Act 1 · Measure</a></p>
 
   <div class="callout">
     <p>
@@ -886,7 +771,7 @@ for (let i = 0; i &lt; steps; i++) {
     out of TLB reach (the address-translation cache covers only a limited span of
     memory, and a random walk over a large window misses in it), or the thread
     running on an efficiency core, whose L2 is only 4 MB. The native version
-    tested both (Part 8). The performance-core run shows the same rise, which
+    tested both (§6). The performance-core run shows the same rise, which
     rules out the efficiency core. A walk that takes one TLB miss per page
     instead of one per access stays flat right up to 16 MB, which points to
     translation cost.
@@ -901,7 +786,8 @@ for (let i = 0; i &lt; steps; i++) {
   </p>
 
   <!-- ============================================================ -->
-  <h2 id="part7">Part 7 — The finale: turning the clock into a covert channel</h2>
+  <h2 id="channel">5 · The finale: turning the clock into a covert channel</h2>
+  <p class="backs">Backs <a href="index.html#talk">Acts 3 &amp; 4 · Talk and Defend</a></p>
 
   <p>
     So far the timing trick only reads a harmless fact about the hardware. The
@@ -987,7 +873,7 @@ function thrash(ms){
     main memory). So the likeliest mechanism is eviction: the sender's 24 MB
     stream pushes the receiver's 8 MB out of the shared cache. The browser can't
     separate that from memory-bandwidth contention; the native cross-cluster
-    test in Part 8 can, and it supports eviction.
+    test in §6 can, and it supports eviction.
   </p>
 
   <p class="filetag">src/cache/channel-sim.js — the model, straight from the measured hardware</p>
@@ -1144,7 +1030,7 @@ export function manchesterEncode(bits) {
     for an 8 MB region), then 140–370 ns on <em>every</em> chip, 1 or 0. Those
     are efficiency-core numbers: that cluster's L2 is only 4 MB, so an 8 MB probe
     falls out to main memory there. macOS had moved the page's main thread to
-    the other cluster once the sender got busy. Part 8 shows that a split across
+    the other cluster once the sender got busy. §6 shows that a split across
     clusters means no channel, so the earlier successes depended on how the OS
     happened to place the threads.
   </p>
@@ -1155,7 +1041,7 @@ export function manchesterEncode(bits) {
     also keeps the page responsive.</li>
     <li><strong>It measures before it transmits.</strong> The receiver runs a
     quick sweep (~1 s) on whatever core it landed on. The knee detector from
-    Part 3 finds that core's cache edges, and each edge proposes a probe that
+    §1 finds that core's cache edges, and each edge proposes a probe that
     fills 85% of that level, plus one roomier probe. A ~1 s pre-flight tries
     each candidate on the same pair of Workers, and the best is used. The
     sender's buffer is sized to overflow the largest level found. So a 4 MB
@@ -1246,13 +1132,13 @@ export function manchesterEncode(bits) {
   </p>
 
   <p>
-    The <strong>defence dial</strong> on the demo page is a simulation. The
+    The <strong>defence dial</strong> in the lesson (Act 4) is a simulation. The
     quality slider adds random noise and shrinks the gap between slow and fast in
     the model. The "coarsen the receiver's timer" checkbox rounds the
     <em>simulated</em> latencies to a 25 ns grid, a value chosen to visibly blur
     the two levels, not one derived from any real browser setting. It's a fair
     illustration of how errors eat into capacity. It is not a measurement of any
-    real mitigation. In fact, as Part 5 explains, real timer coarsening mostly
+    real mitigation. In fact, as §3 explains, real timer coarsening mostly
     doesn't raise the error rate. It forces longer probes per sample, which
     <em>lowers the bitrate</em>.
   </p>
@@ -1275,7 +1161,8 @@ export function manchesterEncode(bits) {
   </p>
 
   <!-- ============================================================ -->
-  <h2 id="part8">Part 8 — The native version: testing what the browser couldn't</h2>
+  <h2 id="native">6 · The native version: testing what the browser couldn't</h2>
+  <p class="backs">Backs <a href="index.html#talk">Acts 1–3, beyond the browser</a></p>
 
   <p>
     Several questions above ended in "this demo can't tell". The C programs in
@@ -1320,7 +1207,7 @@ export function manchesterEncode(bits) {
     yet the latency still disappears. That fits Apple's load address predictor,
     which guesses where a load will go before its address is known (Kim et al.,
     <em>SLAP</em>, 2025), though an aggressive prefetcher would look the same
-    from here. The practical upshot for Part 4: on this chip, "make the loads
+    from here. The practical upshot for §2: on this chip, "make the loads
     dependent" is not enough. The addresses must be unpredictable as well.
   </p>
 
@@ -1389,12 +1276,12 @@ export function manchesterEncode(bits) {
     tried to optimise it.</li>
   </ul>
   <p>
-    The <code>cacHe</code> ghost from Part 7 turned up again in the P-core batch:
+    The <code>cacHe</code> ghost from §5 turned up again in the P-core batch:
     the same single case bit, flipped by noise, and caught by the checksum.
   </p>
 
   <!-- ============================================================ -->
-  <h2 id="part9">Part 9 — Replicate it yourself</h2>
+  <h2 id="replicate">7 · Replicate it yourself</h2>
 
   <p>
     Everything in the demo is in this repository. There's no framework and no
@@ -1409,7 +1296,7 @@ export function manchesterEncode(bits) {
     <li><code>src/cache/manchester.js</code> — the codec: text → bytes → bits → chips and back, with preamble, framing, checksum and optional error correction.</li>
     <li><code>src/cache/channel.js</code> — the live channel: sender and receiver Workers, the calibration sweep, <code>planFromCalibration</code> (cache edges → probe sizes) and the pre-flights.</li>
     <li><code>src/cache/channel-sim.js</code> — the seeded simulator behind replay mode, the defence dial and the tests.</li>
-    <li><code>data/cache/fixtures.json</code> — the captured sweeps plotted in Part 4 and on the demo page.</li>
+    <li><code>data/cache/fixtures.json</code> — the captured sweeps plotted in §2 and in the lesson.</li>
     <li><code>native/</code> — the C measurement (<code>chase.c</code>), the cross-process channel (<code>channel.c</code>) and <code>batch.sh</code>; <code>data/native/</code> holds their results.</li>
     <li><code>test/</code> — unit tests for the codec, simulator, detector and window maths; <code>make -C native test</code> runs the C decoder's self-test on synthetic traces. The live paths themselves are not unit-tested.</li>
   </ul>
@@ -1425,7 +1312,7 @@ npm run build    <span class="cm"># rebuild the self-contained pages into dist/<
 make -C native   <span class="cm"># build the C tools (any C11 compiler)</span>
 ./native/channel run hello --trace out.json   <span class="cm"># two processes, in-band sync</span></code></pre>
   <p>
-    Then open <code>dist/cache.html</code> in a browser (double-click it; no
+    Then open <code>dist/index.html</code> in a browser (double-click it; no
     server needed). Choose <strong>"Pointer chase — live on this machine"</strong>
     and press Run to measure <em>your</em> hierarchy, then switch to
     <strong>"Naive linear stride — live"</strong> to watch the same clock report a
@@ -1434,7 +1321,7 @@ make -C native   <span class="cm"># build the C tools (any C11 compiler)</span>
 
   <h3>Experiments worth trying — including ones that could prove me wrong</h3>
   <ul>
-    <li><strong>Check Part 8 on your machine.</strong> Run
+    <li><strong>Check §6 on your machine.</strong> Run
     <code>./native/batch.sh 20</code> and compare the rates. Different chips have
     different cache layouts, and the cross-cluster result especially may not
     hold elsewhere.</li>
@@ -1446,7 +1333,7 @@ make -C native   <span class="cm"># build the C tools (any C11 compiler)</span>
     so a reader can check the decode instead of trusting the screenshot.</li>
     <li><strong>Measure real coarsening.</strong> Serve the page with
     cross-origin isolation headers (finer clock) and without, then compare live
-    error rates at a fixed chip length. Part 5 predicts little difference in
+    error rates at a fixed chip length. §3 predicts little difference in
     errors, only in the shortest usable chip length.</li>
   </ul>
 
@@ -1459,12 +1346,12 @@ make -C native   <span class="cm"># build the C tools (any C11 compiler)</span>
   </p>
   <ul>
     <li><strong>Caches and the memory-speed gap:</strong> Ulrich Drepper, <em>What Every Programmer Should Know About Memory</em> (2007) — the canonical deep-dive on why caches exist and how they behave. <a href="https://www.akkadia.org/drepper/cpumemory.pdf">akkadia.org/drepper/cpumemory.pdf</a>. A gentler start is Wikipedia's <a href="https://en.wikipedia.org/wiki/CPU_cache">CPU cache</a> article.</li>
-    <li><strong>Prefetching</strong> (the Part 4 villain): Wikipedia, <a href="https://en.wikipedia.org/wiki/Cache_prefetching">Cache prefetching</a>, plus the prefetching sections of Drepper above.</li>
-    <li><strong>The A18 Pro hardware figures</strong> (the Part 6 published specs): <a href="https://theapplewiki.com/wiki/A18_Pro">The Apple Wiki — A18 Pro</a> for cache sizes (L1d 128 KB per performance core, 16 MB L2 shared by the performance cores; the ~24 MB system-level cache is flagged uncertain) and clock. Apple P-core L1 load-to-use latency is documented for the closely related Firestorm core at <a href="https://www.7-cpu.com/cpu/Apple_M1.html">7-CPU — Apple M1</a> (3–4 cycles). General background: <a href="https://en.wikipedia.org/wiki/Apple_A18">Wikipedia — Apple A18</a>.</li>
+    <li><strong>Prefetching</strong> (the §2 villain): Wikipedia, <a href="https://en.wikipedia.org/wiki/Cache_prefetching">Cache prefetching</a>, plus the prefetching sections of Drepper above.</li>
+    <li><strong>The A18 Pro hardware figures</strong> (the §4 published specs): <a href="https://theapplewiki.com/wiki/A18_Pro">The Apple Wiki — A18 Pro</a> for cache sizes (L1d 128 KB per performance core, 16 MB L2 shared by the performance cores; the ~24 MB system-level cache is flagged uncertain) and clock. Apple P-core L1 load-to-use latency is documented for the closely related Firestorm core at <a href="https://www.7-cpu.com/cpu/Apple_M1.html">7-CPU — Apple M1</a> (3–4 cycles). General background: <a href="https://en.wikipedia.org/wiki/Apple_A18">Wikipedia — Apple A18</a>.</li>
     <li><strong>Cache timing as an attack primitive:</strong> Colin Percival, <em>Cache Missing for Fun and Profit</em> (2005) — very readable, and the paper that popularised cache covert channels between threads. <a href="https://www.daemonology.net/papers/htt.pdf">daemonology.net/papers/htt.pdf</a>. The classic Prime+Probe treatment is Osvik, Shamir &amp; Tromer, <em>Cache Attacks and Countermeasures: the Case of AES</em> (2006), <a href="https://eprint.iacr.org/2005/271">eprint.iacr.org/2005/271</a>.</li>
     <li><strong>Cache covert channels between virtual machines:</strong> Maurice et al., <em>Hello from the Other Side: SSH over Robust Cache Covert Channels in the Cloud</em> (NDSS 2017).</li>
     <li><strong>The 2026 red-team report:</strong> OpenAI, <a href="https://openai.com/index/securing-our-frontier-model-training-environment/"><em>Securing our frontier model training environment</em></a> (23 Oct 2026), section "Communicating across isolated tasks". Agents were given attack objectives, and in most of these tests were directed to a specific channel or given an encoding protocol.</li>
-    <li><strong>Apple's load address predictor:</strong> Kim, Genkin et al., <em>SLAP: Data Speculation Attacks via Load Address Prediction on Apple Silicon</em> (2025). Relevant to why the sequential dependent <code>chain</code> in Part 8 hides latency.</li>
+    <li><strong>Apple's load address predictor:</strong> Kim, Genkin et al., <em>SLAP: Data Speculation Attacks via Load Address Prediction on Apple Silicon</em> (2025). Relevant to why the sequential dependent <code>chain</code> in §6 hides latency.</li>
     <li><strong>Cache attacks in the browser</strong> (closest to this demo): Oren et al., <em>The Spy in the Sandbox — Practical Cache Attacks in JavaScript</em> (2015), <a href="https://arxiv.org/abs/1502.07373">arxiv.org/abs/1502.07373</a>.</li>
     <li><strong>Spectre</strong> (why the timer defences exist): Kocher et al., <em>Spectre Attacks</em> (2019), <a href="https://spectreattack.com/spectre.pdf">spectreattack.com/spectre.pdf</a>.</li>
     <li><strong>Covert &amp; side channels, background:</strong> Wikipedia, <a href="https://en.wikipedia.org/wiki/Covert_channel">Covert channel</a> and <a href="https://en.wikipedia.org/wiki/Side-channel_attack">Side-channel attack</a>.</li>

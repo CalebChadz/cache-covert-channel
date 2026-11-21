@@ -2,12 +2,12 @@
 
 **Two cooperating contexts on one machine exchange a message with no shared memory, no network, and no storage — only contention for the CPU cache.**
 
-This is a browser demo and write-up of a *cooperative* cache-timing covert channel, built from first principles and measured honestly. It runs as a single self-contained HTML file with no install and no server, and it walks the full arc:
+This is an interactive browser lesson, plus lab notes, on a *cooperative* cache-timing covert channel, built from first principles and measured honestly. It runs as a single self-contained HTML file with no install and no server, and it walks the full arc:
 
 > **measure** the cache hierarchy out of a clock → watch the naive attack **fail** → **weaponise** the timing primitive into a covert channel → try to **defend** it.
 
-👉 **[Live site](https://calebchadz.github.io/cache-covert-channel/)** · **[Demo](https://calebchadz.github.io/cache-covert-channel/cache.html)** · **[Write-up](https://calebchadz.github.io/cache-covert-channel/article.html)**  
-(Offline: build, then open `dist/cache.html` / `dist/article.html` directly.)
+👉 **[The lesson](https://calebchadz.github.io/cache-covert-channel/)** (four acts, with the live tools built in) · **[Lab notes](https://calebchadz.github.io/cache-covert-channel/article.html)** (code, data and evidence)  
+(Offline: build, then open `dist/index.html` / `dist/article.html` directly. The old `cache.html` link redirects into the lesson.)
 
 ---
 
@@ -30,11 +30,11 @@ No dependencies. Node 18+ is needed **only** for the test runner.
 
 ```bash
 node scripts/build.mjs          # writes dist/*.html
-open dist/cache.html            # or just double-click it
+open dist/index.html            # or just double-click it
 node --test "test/*.test.js"    # pure-codec + model tests, nothing to install
 ```
 
-Everything in `dist/` is completely self-contained — no server, no network, no CDN. Any page can be emailed or opened offline on its own.
+Everything in `dist/` is completely self-contained — no server, no network, no CDN. Any page can be emailed or opened offline on its own. (The lesson's animated illustrations use [p5.js](https://p5js.org/), which is vendored in `vendor/p5/` and inlined at build time, so the lesson page is ~1.2 MB.)
 
 ## How it works
 
@@ -90,7 +90,9 @@ src/
   shell/   chart.js   (canvas helpers)   css.js (theme)   nav.js (build-time)
   cache/   chase.js linear.js detect.js ui.js            (the measurement)
            manchester.js channel-sim.js channel.js channel-ui.js  (the channel)
-web/       index.html  cache.html  article.html          (page templates)
+  lesson/  sketches.js                                    (p5.js animated illustrations)
+vendor/    p5/ — p5.js v1.11.1, unmodified (LGPL-2.1)
+web/       index.html (the lesson)  article.html (lab notes)  cache.html (redirect)
 data/      cache fixtures — inlined at build
 test/      pure codec + model tests, run under node --test
 native/    C measurement + cross-process channel (make -C native)
@@ -114,8 +116,10 @@ node --test "test/*.test.js"
 
 ## Credits & origin
 
-Built by **Caleb Chadderton**. The full write-up, including a claim-by-claim account of the evidence and its limits, is the [How it works](https://calebchadz.github.io/cache-covert-channel/article.html) page.
+Built by **Caleb Chadderton**. The full write-up, including a claim-by-claim account of the evidence and its limits, is the [Lab notes](https://calebchadz.github.io/cache-covert-channel/article.html) page.
 
 ## License
+
+p5.js (in `vendor/p5/`) is © the p5.js contributors under the LGPL-2.1; see `vendor/p5/LICENSE.txt`. Everything else:
 
 [MIT](LICENSE).

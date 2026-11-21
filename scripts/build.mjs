@@ -21,27 +21,33 @@ const readRoot = (...p) => read(root, ...p);
 const SHELL_MODULES = ['src/shell/chart.js'];
 
 const PAGES = [
-  { id: 'index',   out: 'index.html',   template: 'web/index.html',   modules: [], data: null },
   {
-    id: 'cache',
-    out: 'cache.html',
-    template: 'web/cache.html',
+    id: 'index',
+    out: 'index.html',
+    template: 'web/index.html',
+    // The lesson embeds both interactive tools beside the text that explains them.
     modules: [
       'src/cache/chase.js',
       'src/cache/linear.js',
       'src/cache/detect.js',
       'src/cache/ui.js',
-      // covert-channel finale
+      // covert channel (Acts 3–4)
       'src/cache/manchester.js',
       'src/cache/channel-sim.js',
       'src/cache/channel.js',
       'src/cache/channel-ui.js',
+      // animated illustrations
+      'src/lesson/sketches.js',
     ],
+    // Inlined as-is (not run through stripModuleSyntax) so the page stays one file.
+    vendor: ['vendor/p5/p5.min.js'],
     data: () =>
       `const BUILD = ${JSON.stringify(buildInfo())};\n` +
       `const FIXTURES = ${readRoot('data/cache/fixtures.json').trim()};\n` +
       `const CHANNEL_FIXTURE = ${readRoot('data/cache/channel-fixture.json').trim()};`,
   },
+  // Old demo URL: a redirect into the lesson, so existing links keep working.
+  { id: 'cache',   out: 'cache.html',   template: 'web/cache.html',   modules: [], data: null },
   { id: 'article', out: 'article.html', template: 'web/article.html', modules: [], data: null },
 ];
 
@@ -69,12 +75,13 @@ function bundleModules(paths) {
     .join('\n');
 }
 
-function stamp(html, { id, code, data }) {
+function stamp(html, { id, code, data, vendor }) {
   return html
     .replace('<!--__HEAD__-->', () => headHtml(id))
     .replace('/*__SHELL_CSS__*/', () => SHELL_CSS)
     .replace('<!--__NAV__-->', () => navHtml(id))
     .replace('<!--__FOOTER__-->', () => footerHtml())
+    .replace('/*__VENDOR__*/', () => vendor || '')
     .replace('/*__DATA__*/', () => data || '')
     .replace('/*__CODE__*/', () => code || '');
 }
@@ -88,7 +95,9 @@ for (const page of PAGES) {
     ? bundleModules([...SHELL_MODULES, ...page.modules])
     : '';
   const data = typeof page.data === 'function' ? page.data() : page.data;
-  const html = stamp(readRoot(page.template), { id: page.id, code: modules, data });
+  // A literal "</script" inside an inlined library would end the tag early.
+  const vendor = (page.vendor || []).map((v) => readRoot(v).replace(/<\/script/gi, '<\\/script')).join('\n');
+  const html = stamp(readRoot(page.template), { id: page.id, code: modules, data, vendor });
   fs.writeFileSync(path.join(distDir, page.out), html);
   written.push([page.out, html]);
 }

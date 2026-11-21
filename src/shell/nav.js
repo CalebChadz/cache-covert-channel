@@ -8,20 +8,17 @@
 export const REPO_URL = 'https://github.com/CalebChadz/cache-covert-channel';
 
 export const PAGES = [
-  { id: 'index',   href: 'index.html',   nav: 'Overview' },
-  { id: 'cache',   href: 'cache.html',   nav: 'Live demo' },
-  { id: 'article', href: 'article.html', nav: 'How it works' },
+  { id: 'index',   href: 'index.html',   nav: 'The lesson' },
+  { id: 'article', href: 'article.html', nav: 'Lab notes' },
 ];
 
 // Per-page description for search engines and link previews (LinkedIn, Slack,
 // iMessage…). Kept here so every page gets the same set of tags.
 const DESCRIPTIONS = {
   index:
-    'Two threads exchange a message without the payload touching shared memory, the network or storage — only contention for the CPU cache. A browser demo, with a candid account of what it does and does not show.',
-  cache:
-    'Measure your CPU cache hierarchy from a coarse browser timer, then send a message through the cache between a page and a Web Worker.',
+    'An interactive lesson in four acts: measure your CPU cache with a stopwatch, watch the obvious approach fail, send a message between two threads through the cache, then try to stop it.',
   article:
-    'A from-scratch explainer: the memory-speed gap, pointer chasing vs the prefetcher, how the channel is framed and decoded, and what the evidence does and does not show.',
+    'Lab notes behind the lesson: the code, the captured data, how the live channel adapts to each chip, a native C version between processes, and what the evidence does and does not show.',
 };
 
 // Inline SVG favicon — keeps every page a single self-contained file.

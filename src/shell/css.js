@@ -316,6 +316,43 @@ footer.site code { background: var(--panel-2); }
 
 .lede { font-size: clamp(17px, 1.9vw, 19px); line-height: 1.65; color: #dfe8f2; }
 
+/* ---- figures, code and asides (shared by the lesson and the lab notes) ---- */
+.prose figure { margin: 28px 0; }
+.prose figure .fig {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.prose figure svg { width: 100%; min-width: 560px; height: auto; display: block; }
+.prose figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; text-align: center; text-wrap: pretty; }
+.fig-hint { display: none; font: 600 11px/1 var(--mono); color: var(--muted); text-align: right; margin-top: 6px; letter-spacing: .06em; }
+@media (max-width: 600px) { .fig-hint { display: block; } }
+pre.code {
+  background: #0a1019; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; font-family: var(--mono); font-size: 13px;
+  line-height: 1.6; margin: 8px 0 18px; tab-size: 2;
+}
+pre.code code { background: none; border: 0; padding: 0; color: var(--text); font-size: inherit; overflow-wrap: normal; }
+pre.code .cm { color: var(--muted); }
+pre.code b { color: var(--accent); font-weight: 600; }
+.filetag { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 20px 0 0; }
+.keyidea { border: 1px solid rgba(55,243,154,0.22); border-left: 3px solid var(--ok); background: linear-gradient(90deg, rgba(55,243,154,0.06), rgba(55,243,154,0.01)); padding: 16px 18px; margin: 24px 0; border-radius: 10px; font-size: 15px; }
+.keyidea p:last-child { margin-bottom: 0; }
+
+/* Collapsible "go deeper" blocks: optional detail stays one tap away
+   instead of interrupting the main reading path. */
+details.more { border: 1px solid var(--line); border-radius: 10px; background: rgba(13,19,29,0.6); margin: 18px 0; }
+details.more > summary {
+  cursor: pointer; list-style: none; padding: 13px 16px; font-weight: 600; color: var(--text-hi);
+  display: flex; align-items: center; gap: 10px; border-radius: 10px;
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before { content: "+"; font: 700 15px/1 var(--mono); color: var(--accent); width: 14px; flex: none; }
+details.more[open] > summary::before { content: "−"; }
+details.more > summary:hover { background: rgba(34,211,238,0.05); }
+details.more > summary .hint { margin-left: auto; font: 500 12px/1 var(--mono); color: var(--muted); }
+details.more > .more-body { padding: 4px 18px 6px; border-top: 1px solid var(--line); }
+details.more > .more-body > :first-child { margin-top: 14px; }
+
 footer.site { border-top: 1px solid var(--line); margin-top: 24px; background: rgba(7,10,16,0.6); }
 .footer-inner { max-width: var(--maxw); margin: 0 auto; padding: 28px var(--gutter) 36px; color: var(--muted); font-size: 14px; }
 .footer-inner p { margin: 0 0 6px; max-width: 760px; }

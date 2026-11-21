@@ -2,7 +2,7 @@
 //
 // This is what makes the demo reliable regardless of hardware. It takes an
 // encoded chip sequence and renders the latency samples a receiver *would* see,
-// using a model calibrated from live measurements on the author's machine
+// using a model calibrated from live measurements on my machine
 // (idle ~9 ns, occupied ~90 ns per access - see data/cache/channel-fixture.json).
 // Noise, drift and timer coarsening are parameters, so the same code powers:
 //
