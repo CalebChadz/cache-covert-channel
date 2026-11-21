@@ -24,8 +24,9 @@ Notes:
   The message box was edited before Save was pressed, and Save trace read the
   box at save time. Fixed: traces now record the message as it was when the
   run started. The file is left as captured.
-- **No power state in these.** They were run against a GitHub Pages build
-  from before power logging was deployed (that deploy failed on a transient
+- **Power: all eight were on battery**, as confirmed by the author (not
+  recorded in the files themselves). They were run against a GitHub Pages
+  build from before power logging was deployed (that deploy failed on a transient
   GitHub artifact error). Traces now also record the page URL and the build's
   git commit (`build.commit`), so this kind of mix-up is visible in the data.
 - Automation-driven runs from the same day (not saved here) landed on the
