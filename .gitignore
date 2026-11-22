@@ -1,7 +1,18 @@
+# OS / editor
 .DS_Store
-node_modules/
-*.log
 .vscode/
+.idea/
+
+# Build output (CI builds and deploys dist/; run `npm run build` locally)
+dist/
+
+# Native binaries (make -C native)
 native/chase
 native/channel
 native/bandwidth
+*.o
+*.dSYM/
+
+# Node
+node_modules/
+*.log

@@ -1,7 +1,7 @@
 {
   "name": "cache-covert-channel",
   "version": "1.0.0",
-  "private": false,
+  "private": true,
   "type": "module",
   "description": "A cooperative CPU-cache covert channel in the browser: measure the cache hierarchy from a timer, weaponise the timing into a channel, then defend it. No dependencies, no server, no network.",
   "keywords": [
@@ -14,6 +14,12 @@
     "microarchitecture"
   ],
   "license": "MIT",
+  "author": "Caleb Chadderton",
+  "homepage": "https://calebchadz.github.io/cache-covert-channel/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/calebchadz/cache-covert-channel.git"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test \"test/*.test.js\"",

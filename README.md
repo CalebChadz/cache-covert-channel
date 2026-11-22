@@ -68,7 +68,7 @@ Site isolation defeats in-process attacks like Spectre, but contention channels 
 `native/` holds C versions of both halves. It doesn't replace the browser demo. It tests what the browser can't: a nanosecond clock, finer window sizes, a choice of core cluster, extra access patterns that separate prefetching from overlapping misses, and a channel between two **separate processes** with no shared start time.
 
 ```bash
-make -C native            # builds native/chase and native/channel (any C11 compiler)
+make -C native            # builds native/chase, channel and bandwidth (any C11 compiler)
 make -C native test       # decoder self-test on synthetic traces + a smoke sweep
 
 ./native/chase --modes chase,chain,stream,scatter --per-octave 4 > sweep.csv
@@ -93,13 +93,13 @@ src/
   cache/   chase.js linear.js detect.js ui.js            (the measurement)
            manchester.js channel-sim.js channel.js channel-ui.js  (the channel)
   lesson/  sketches.js                                    (p5.js animated illustrations)
-vendor/    p5/ — p5.js v1.11.1, unmodified (LGPL-2.1)
-web/       index.html (the lesson)  article.html (lab notes)  cache.html (redirect)
-data/      cache fixtures — inlined at build
+web/       page templates: index.html (the lesson)  article.html (lab notes)  cache.html (redirect)
+data/      cache/ fixtures inlined at build; browser/ native/ power/ captured evidence (see data/README.md)
 test/      pure codec + model tests, run under node --test
 native/    C measurement + cross-process channel (make -C native)
 scripts/   build.mjs
-dist/      the built, self-contained pages
+vendor/    p5/ — p5.js v1.11.1, unmodified (LGPL-2.1)
+dist/      build output (git-ignored; CI builds and deploys it)
 ```
 
 `src/` is plain ES modules so the tests import it directly. The bundle exists only because browsers refuse module imports and `fetch()` over `file://`. No page's algorithm code knows the DOM exists.

@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+# Third-party library: keep it out of GitHub's language stats and diffs.
+vendor/** linguist-vendored -diff
+
+# Captured measurements, not code.
+data/**/*.json linguist-generated
+data/**/*.csv  linguist-generated
