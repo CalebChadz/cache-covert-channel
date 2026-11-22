@@ -368,6 +368,7 @@ export function initChannel() {
     els.run.disabled = true;
     if (els.save) els.save.disabled = true;
     setBadge('live');
+    document.dispatchEvent(new CustomEvent('lesson:measuring', { detail: true }));
     const fmt = (b) => (b >= 1048576 ? (b / 1048576).toFixed(b >= 10 * 1048576 ? 0 : 1) + ' MB' : Math.round(b / 1024) + ' KB');
     const diag = (liveDiag = { calibration: null, plan: null, preflights: [], attempts: [], chosen: null });
     let session = null;
@@ -438,6 +439,7 @@ export function initChannel() {
     } finally {
       if (session) session.close();
       els.run.disabled = false;
+      document.dispatchEvent(new CustomEvent('lesson:measuring', { detail: false }));
     }
   }
 

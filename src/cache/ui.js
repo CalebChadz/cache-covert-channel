@@ -44,13 +44,18 @@ export function initCache() {
     chart: $('chart'), status: $('status'), verdict: $('verdict'),
     statRange: $('statRange'), statMin: $('statMin'), statMax: $('statMax'), statKnee: $('statKnee'),
     env: $('env'), table: $('table'), originalSays: $('originalSays'),
+    stage: $('cacheStage'), source: $('cacheSource'), progress: $('cacheProgress'),
   };
+  const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const env = environmentReport();
   let running = false;
   let cancelled = false;
   let current = [];
   let currentMode = 'chase';
+  // While a live run is going: the planned windows and the one being measured,
+  // so the chart can show its full axes from the start and fill in left to right.
+  let plan = null;
 
   function setStatus(msg, cls = '') {
     els.status.textContent = msg;
@@ -58,9 +63,10 @@ export function initCache() {
   }
 
   function renderChart(points, mode) {
-    if (!points.length) return;
-    const xTicks = points.map((p) => ({ x: p.bytes, label: fmtBytes(p.bytes).replace(' ', '') }));
-    const { knees } = detectKnees(points);
+    if (!points.length && !plan) return;
+    const xs = plan ? plan.sizes : points.map((p) => p.bytes);
+    const xTicks = xs.map((b) => ({ x: b, label: fmtBytes(b).replace(' ', '') }));
+    const { knees } = plan ? { knees: [] } : detectKnees(points);
     // Thin the x labels on narrow (phone) screens so they never collide.
     const narrow = (els.chart.clientWidth || 600) < 560;
     lineChart(els.chart, [{
@@ -76,6 +82,11 @@ export function initCache() {
       yFormat: (v) => v.toFixed(v < 10 ? 1 : 0),
       xTicks: xTicks.filter((_, i) => i % (narrow ? 4 : 2) === 0),
       marks: knees.map((k) => ({ x: k.atBytes, label: k.label })),
+      ...(plan && {
+        xMin: plan.sizes[0],
+        xMax: plan.sizes[plan.sizes.length - 1],
+        cursor: plan.at != null ? { x: plan.at, label: 'measuring ' + fmtBytes(plan.at) } : null,
+      }),
     });
   }
 
@@ -118,6 +129,49 @@ export function initCache() {
     els.run.disabled = b;
     els.stop.disabled = !b;
     els.mode.disabled = b;
+    if (!b) {
+      els.run.textContent = 'Run';
+      els.progress.hidden = true;
+      els.stage.classList.remove('is-running');
+      if (plan) { plan = null; if (current.length) renderChart(current, currentMode); }
+    }
+    // Pause the lesson's animations so they don't add noise to the reading.
+    document.dispatchEvent(new CustomEvent('lesson:measuring', { detail: b }));
+  }
+
+  // How far through the run we are, shown in three places at once: the Run
+  // button (where your finger is), a bar above the chart, and the chart itself.
+  function setProgress(done, total, label) {
+    const pct = Math.round((done / total) * 100);
+    els.run.textContent = `Measuring… ${pct}%`;
+    els.progress.hidden = false;
+    els.progress.firstElementChild.style.transform = `scaleX(${done / total})`;
+    els.progress.setAttribute('aria-valuenow', String(pct));
+    if (label) els.progress.setAttribute('aria-valuetext', label);
+  }
+
+  function setSource(live) {
+    els.source.className = 'srcbadge ' + (live ? 'live' : 'sim');
+    els.source.textContent = live ? '● LIVE — measuring this browser' : '● CAPTURED — replay of my laptop';
+  }
+
+  function resetStats() {
+    for (const k of ['statRange', 'statMin', 'statMax', 'statKnee']) els[k].textContent = '–';
+    els.verdict.textContent = '';
+    els.verdict.className = 'status';
+    els.originalSays.textContent = '';
+  }
+
+  // When the controls sit above the results (one-column layout, i.e. phones),
+  // bring the chart into view so the run is visibly happening. Returns true if
+  // it had to scroll.
+  function revealStage() {
+    if (!window.matchMedia('(max-width: 960px)').matches) return false; // side-by-side: already visible
+    const r = els.stage.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    if (r.top >= 0 && r.top < vh * 0.5) return false;
+    els.stage.scrollIntoView({ block: 'start', behavior: REDUCED ? 'auto' : 'smooth' });
+    return true;
   }
 
   // Drive a generator, yielding to the event loop between windows so the page
@@ -126,7 +180,12 @@ export function initCache() {
   // short enough to fit in a frame.
   function drive(gen, mode, done) {
     const tick = () => {
-      if (cancelled) { setBusy(false); setStatus('Stopped.', 'warn'); return; }
+      if (cancelled) {
+        setBusy(false);
+        if (current.length) { renderSummary(current, mode); }
+        setStatus(`Stopped after ${current.length} window${current.length === 1 ? '' : 's'}.`, 'warn');
+        return;
+      }
       let step;
       try {
         step = gen.next();
@@ -138,12 +197,16 @@ export function initCache() {
       if (step.done) { done(current); return; }
 
       const v = step.value;
+      const total = plan.sizes.length;
       if (v.phase === 'warmup') {
-        setStatus('Warming up the JIT…');
+        setStatus(`Measuring ${fmtBytes(plan.sizes[0])}…`);
       } else if (v.phase === 'progress') {
-        setStatus(`Measuring ${fmtBytes(v.bytes)} — run ${v.run} of ${v.of}…`);
+        const label = `${fmtBytes(v.bytes)}, run ${v.run} of ${v.of}`;
+        setStatus(`Measuring ${label} · window ${current.length + 1} of ${total}`);
+        setProgress(current.length + v.run / v.of, total, label);
       } else if (v.phase === 'window') {
         current = v.results;
+        plan.at = plan.sizes[current.length] ?? null;
         renderChart(current, mode);
         renderTable(current);
       }
@@ -161,6 +224,7 @@ export function initCache() {
     renderTable(current);
     renderSummary(current, key);
     setStatus(`Replayed capture — ${f.machine}, ${f.captured}.`, 'ok');
+    setSource(false);
     setBusy(false);
   }
 
@@ -179,7 +243,6 @@ export function initCache() {
     cancelled = false;
     setBusy(true);
     current = [];
-    setStatus('Allocating…');
 
     let alloc;
     try {
@@ -193,6 +256,17 @@ export function initCache() {
 
     const sizes = windowSizes(minSize, Math.min(maxSize, alloc.bytes / 2));
 
+    // Show the run has started before any blocking work: empty axes over the
+    // planned range, the first window highlighted, a 0% bar and a LIVE badge.
+    plan = { sizes, at: sizes[0] };
+    setSource(true);
+    resetStats();
+    renderTable([]);
+    els.stage.classList.add('is-running');
+    setProgress(0, sizes.length, 'warming up');
+    setStatus('Warming up the JIT…');
+    renderChart([], currentMode);
+
     // Make every timed run last ~50 clock ticks (and at least 10 ms), so the
     // clock's rounding is ~2% whatever this browser's timer resolution is.
     const quantumMs = env.timerQuantumMs || 1;
@@ -202,17 +276,23 @@ export function initCache() {
       ? sweepLinear({ bytes: new Uint8Array(alloc.buf.buffer), ...opts, warmupMs: 400 })
       : sweep({ buf: alloc.buf, ...opts });
 
-    drive(gen, currentMode, (points) => {
+    const start = () => drive(gen, currentMode, (points) => {
       setBusy(false);
       renderSummary(points, currentMode);
       const worst = Math.max(...points.map((p) => (p.resolutionNs || 0) / p.ns));
       setStatus(`Live run complete on this machine — ${points.length} windows measured; ` +
         `each run lasted ≥ ${targetMs.toFixed(0)} ms, so clock rounding is under ${Math.max(1, Math.ceil(worst * 100))}% of a reading.`, 'ok');
     });
+
+    // Let the "started" state paint (and any scroll settle) before the first
+    // measurement blocks the thread; a smooth scroll mid-measurement would
+    // also add noise to the first windows.
+    const scrolled = revealStage();
+    requestAnimationFrame(() => setTimeout(start, scrolled && !REDUCED ? 600 : 30));
   }
 
   function run() {
-    if (els.mode.value.endsWith('-replay')) { loadFixture(); return; }
+    if (els.mode.value.endsWith('-replay')) { loadFixture(); revealStage(); return; }
     runLive();
   }
 
@@ -225,7 +305,7 @@ export function initCache() {
     els.repeats.disabled = !live;
   });
   window.addEventListener('resize', () => {
-    if (current.length) renderChart(current, currentMode);
+    if (current.length || plan) renderChart(current, currentMode);
   });
 
   // Environment readout — measured, not assumed. (env is hoisted above.)

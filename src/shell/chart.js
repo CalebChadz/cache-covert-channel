@@ -27,7 +27,10 @@ export function cssVar(name, fallback) {
 //
 // series: [{ points: [[x,y],...], color, width, dashed }]
 // opts:   { logX, xLabel, yLabel, yMin, yMax, marks: [{x, label, color}],
-//           xTicks: [{x, label}], yFormat: fn }
+//           xTicks: [{x, label}], yFormat: fn,
+//           cursor: {x, label} }  - a highlighted column, e.g. "measuring now"
+// With no points, it still draws the grid if xMin/xMax are given, so a live
+// run can show its empty axes the moment it starts.
 export function lineChart(canvas, series, opts = {}) {
   const height = opts.height || 240;
   const { ctx, w, h } = fitCanvas(canvas, height);
@@ -36,14 +39,14 @@ export function lineChart(canvas, series, opts = {}) {
   const plotH = Math.max(1, h - padT - padB);
 
   const all = series.flatMap((s) => s.points);
-  if (!all.length) return;
+  if (!all.length && (opts.xMin == null || opts.xMax == null)) return;
 
   const xs = all.map((p) => p[0]);
   const ys = all.map((p) => p[1]);
   let xMin = opts.xMin ?? Math.min(...xs);
   let xMax = opts.xMax ?? Math.max(...xs);
   let yMin = opts.yMin ?? 0;
-  let yMax = opts.yMax ?? Math.max(...ys) * 1.08;
+  let yMax = opts.yMax ?? (ys.length ? Math.max(...ys) * 1.08 : 1);
   if (yMax === yMin) yMax = yMin + 1;
 
   const tx = (x) => {
@@ -89,6 +92,33 @@ export function lineChart(canvas, series, opts = {}) {
     ctx.stroke();
     ctx.fillStyle = muted;
     ctx.fillText(t.label, x, padT + plotH + 6);
+  }
+
+  // "in progress" column
+  if (opts.cursor && opts.cursor.x >= xMin && opts.cursor.x <= xMax) {
+    const x = tx(opts.cursor.x);
+    const accent = cssVar('--accent', '#0969da');
+    ctx.save();
+    ctx.globalAlpha = 0.14;
+    ctx.fillStyle = accent;
+    ctx.fillRect(x - 7, padT, 14, plotH);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(Math.round(x) + 0.5, padT);
+    ctx.lineTo(Math.round(x) + 0.5, padT + plotH);
+    ctx.stroke();
+    if (opts.cursor.label) {
+      ctx.fillStyle = accent;
+      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+      const right = x > padL + plotW * 0.7;
+      ctx.textAlign = right ? 'right' : 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(opts.cursor.label, x + (right ? -10 : 10), padT + plotH - 4);
+    }
+    ctx.restore();
   }
 
   // annotations (vertical marks)

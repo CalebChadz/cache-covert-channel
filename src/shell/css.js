@@ -216,6 +216,24 @@ button.primary:hover:not(:disabled) { color: #001018; filter: brightness(1.08); 
 .chartBox b { display: block; margin-bottom: 6px; font: 600 10px/1.3 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 .chartBox canvas { width: 100%; display: block; }
 
+/* Live-run feedback. Both animations are transform/opacity only, so the
+   compositor runs them off the main thread and they don't disturb timing. */
+.progress { height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.progress > span {
+  display: block; height: 100%; width: 100%; transform-origin: left; transform: scaleX(0);
+  background: linear-gradient(90deg, var(--accent), var(--accent2, #8b5cf6));
+  transition: transform .25s var(--ease, ease);
+}
+.chartBox { position: relative; }
+.stage.is-running .chartBox { border-color: var(--accent); }
+.stage.is-running .chartBox::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 3px rgba(34,211,238,0.22); opacity: 0;
+  animation: run-pulse 1.6s ease-in-out infinite;
+}
+@keyframes run-pulse { 50% { opacity: 1; } }
+.stage { scroll-margin-top: calc(var(--nav-h) + 12px); }
+
 /* live vs simulated provenance badge */
 .srcbadge {
   display: inline-flex; align-self: flex-start; align-items: center; max-width: 100%;

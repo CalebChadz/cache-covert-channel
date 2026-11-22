@@ -426,15 +426,17 @@ a.next:hover .arr { transform: translateY(3px); }
     </p>
   </div>
 
-  <div class="stage">
+  <div class="stage" id="cacheStage">
+    <div id="cacheSource" class="srcbadge sim">● CAPTURED — replay of my laptop</div>
+    <div class="progress" id="cacheProgress" role="progressbar" aria-label="Live run progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><span></span></div>
+    <div class="status" id="status">Loading…</div>
+    <div class="chartBox"><canvas id="chart"></canvas></div>
     <div class="stats">
       <div class="stat"><b id="statRange">–</b><span>Dynamic range</span></div>
       <div class="stat"><b id="statMin">–</b><span>Fastest ns</span></div>
       <div class="stat"><b id="statMax">–</b><span>Slowest ns</span></div>
       <div class="stat"><b id="statKnee">–</b><span>Boundaries</span></div>
     </div>
-    <div class="status" id="status">Loading…</div>
-    <div class="chartBox"><canvas id="chart"></canvas></div>
     <div class="status" id="verdict"></div>
     <div class="side">
       <div id="table"></div>

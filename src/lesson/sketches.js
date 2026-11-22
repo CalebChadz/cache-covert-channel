@@ -40,6 +40,16 @@ export function lessonExpectedNs(workingSet, levels = LESSON_LEVELS) {
 
   const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // While a live measurement runs, every sketch holds still: a 60 fps draw
+  // loop on the same thread would add exactly the noise the tools measure.
+  // The tools announce this with a `lesson:measuring` event (detail: bool).
+  let measuring = false;
+  const syncs = [];
+  document.addEventListener('lesson:measuring', (e) => {
+    measuring = !!e.detail;
+    syncs.forEach((f) => f());
+  });
+
   function theme() {
     const cs = getComputedStyle(document.documentElement);
     const v = (n, d) => (cs.getPropertyValue(n).trim() || d);
@@ -77,12 +87,13 @@ export function lessonExpectedNs(workingSet, levels = LESSON_LEVELS) {
     let playing = !REDUCED;
     let visible = false;
     const sync = () => {
-      if (playing && visible) inst.loop(); else inst.noLoop();
+      if (playing && visible && !measuring) inst.loop(); else inst.noLoop();
       if (btn) {
         btn.textContent = playing ? '❚❚ Pause' : '▶ Play';
         btn.setAttribute('aria-pressed', String(!playing));
       }
     };
+    syncs.push(sync);
     if (btn) btn.addEventListener('click', () => { playing = !playing; sync(); });
     if ('IntersectionObserver' in window) {
       new IntersectionObserver((es) => { visible = es[0].isIntersecting; sync(); }, { rootMargin: '80px' }).observe(host);
